@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="ta"><head><meta charset="utf-8"><title>Our Chat</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#008069">
+<link rel="preconnect" href="https://www.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://firestore.googleapis.com" crossorigin>
+<link rel="preconnect" href="https://identitytoolkit.googleapis.com" crossorigin>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<style>
+:root{--hd:#008069;--bg:#efeae2;--card:#f0f2f5;--text:#111b21;--mute:#667781;--out:#d9fdd3;--in:#fff;--inp:#fff;--send:#00a884}
+@media(prefers-color-scheme:dark){:root{--hd:#202c33;--bg:#0b141a;--card:#202c33;--text:#e9edef;--mute:#8696a0;--out:#005c4b;--in:#202c33;--inp:#2a3942}}
+html,body{height:100%;margin:0;overscroll-behavior:none}
+body{background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Noto Sans Tamil",sans-serif;display:flex;flex-direction:column}
+header{background:var(--hd);color:#fff;padding:8px 14px;padding-top:max(8px,env(safe-area-inset-top));display:flex;align-items:center;gap:12px}
+.av{width:40px;height:40px;border-radius:50%;background:#6b7c85;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:18px}
+.ti{flex:1;line-height:1.25;font-weight:600}.ti small{display:block;font-weight:400;opacity:.8;font-size:12px}
+header b{cursor:pointer;font-size:20px;font-weight:400}
+#msgs{flex:1;overflow-y:auto;padding:10px 6%;display:flex;flex-direction:column;gap:3px}
+.m{max-width:80%;padding:6px 9px 4px;border-radius:8px;background:var(--in);align-self:flex-start;box-shadow:0 1px .5px rgba(0,0,0,.13);white-space:pre-wrap;word-wrap:break-word}
+.m.me{background:var(--out);align-self:flex-end}
+.tm{font-size:11px;color:var(--mute);text-align:right;margin-top:2px;display:flex;align-items:center;justify-content:flex-end;gap:5px}
+.dot{width:8px;height:8px;border-radius:50%;flex:none;display:inline-block}
+.dot.red{background:#dc2626;box-shadow:0 0 0 2px rgba(220,38,38,.18)}
+.dot.yellow{background:#f4b400;box-shadow:0 0 0 2px rgba(244,180,0,.18)}
+.dot.green{background:#16a34a;box-shadow:0 0 0 2px rgba(22,163,74,.18)}
+.dt{align-self:center;background:var(--in);color:var(--mute);font-size:12px;padding:4px 10px;border-radius:8px;margin:8px 0;box-shadow:0 1px .5px rgba(0,0,0,.13)}
+#bar{display:flex;gap:8px;padding:8px;padding-bottom:max(8px,env(safe-area-inset-bottom));background:var(--card);align-items:center}
+input{padding:11px 16px;border-radius:22px;border:0;background:var(--inp);color:var(--text);font-size:16px;outline:0}
+#t{flex:1}
+button{border:0;border-radius:22px;padding:10px 18px;background:var(--send);color:#fff;font-size:16px;cursor:pointer}
+#s{width:44px;height:44px;padding:0;border-radius:50%;font-size:18px}
+#login{margin:auto;display:flex;flex-direction:column;gap:12px;width:min(300px,85%);text-align:center}
+#chat{display:none;flex:1;flex-direction:column;min-height:0}
+#inc{display:none;position:fixed;top:0;left:0;right:0;z-index:8;background:#16a34a;color:#fff;padding:12px;align-items:center;justify-content:space-between}
+#inc button{background:#fff;color:#111;margin-left:8px}
+#vid{display:none;position:fixed;inset:0;background:#000;z-index:9;flex-direction:column}
+#rv{flex:1;min-height:0;width:100%;object-fit:contain;background:#000}
+#lv{position:absolute;right:10px;top:10px;width:110px;border-radius:10px;border:2px solid #fff}
+#ctl{display:flex;justify-content:center;gap:16px;padding:14px}
+#ctl button{background:#374151}#ctl .red{background:#dc2626}
+#login input{width:100%;box-sizing:border-box;border:1px solid var(--mute)}
+#login button{width:100%}
+#lf,#sp{display:none;flex-direction:column;gap:12px}
+#fg{color:var(--mute);font-size:13px;cursor:pointer;text-decoration:underline}
+#sc{width:44px;height:44px;padding:0;border-radius:50%;font-size:18px;background:#6b7c85}
+#sch,#cpw{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:10;align-items:center;justify-content:center}
+#sch>div,#cpw>div{background:var(--card);padding:18px;border-radius:12px;display:flex;flex-direction:column;gap:12px;width:min(320px,88%)}
+.m.sd{opacity:.85;border:1px dashed var(--mute)}
+#cpw input,#sch input{width:100%;box-sizing:border-box;border:1px solid var(--mute)}
+</style></head><body>
+<div id="login">
+  <h2 style="margin:0">💬 Our Chat</h2>
+  <div id="ld" style="color:var(--mute)">ஏற்றுகிறது...</div>
+  <div id="lf">
+    <input id="em" type="email" placeholder="Gmail" autocomplete="username">
+    <input id="pw" type="password" placeholder="Password" autocomplete="current-password">
+    <button id="pl">உள்நுழை</button>
+    <button id="go" style="background:#4285f4">முதல் முறை? Google மூலம் உள்நுழை</button>
+    <span id="fg">Password மறந்துவிட்டதா?</span>
+  </div>
+  <div id="sp">
+    <div id="spt" style="color:var(--mute)"></div>
+    <input id="p1" type="password" placeholder="புதிய password (எதுவும் வைக்கலாம்)" autocomplete="new-password">
+    <input id="p2" type="password" placeholder="மீண்டும் password" autocomplete="new-password">
+    <button id="ps">சேமி</button>
+  </div>
+  <div id="err" style="color:#dc2626;font-size:13px"></div>
+</div>
+<div id="inc"><span id="who"></span><span><button id="acc">ஏற்று</button><button id="dec">மறு</button></span></div>
+<div id="chat">
+  <header><div class="av" id="av">💬</div><div class="ti"><span id="fn">Our Chat</span><small>private chat</small></div><b id="cpk" title="Password மாற்று">🔑</b><b id="bell" title="Notification">🔔</b><b id="call" title="Video call">📞</b><b id="out" title="வெளியேறு">⎋</b></header>
+  <div id="msgs"></div>
+  <div id="bar"><input id="t" placeholder="செய்தி..." autocomplete="off"><button id="sc" title="நேரம் அமை">⏰</button><button id="s">➤</button></div>
+</div>
+<div id="sch"><div><b>⏰ எப்போது அனுப்ப வேண்டும்?</b><input id="sdt" type="datetime-local"><div style="display:flex;gap:8px"><button id="sx" style="flex:1;background:#6b7c85">ரத்து</button><button id="sok" style="flex:1">அமை</button></div></div></div>
+<div id="cpw"><div><b>🔑 Password மாற்று</b>
+<input id="c0" type="password" placeholder="பழைய password" autocomplete="current-password">
+<input id="c1" type="password" placeholder="புதிய password (குறைந்தது 4)" autocomplete="new-password">
+<input id="c2" type="password" placeholder="மீண்டும் புதிய password" autocomplete="new-password">
+<div id="cerr" style="color:#dc2626;font-size:13px"></div>
+<div style="display:flex;gap:8px"><button id="cx" style="flex:1;background:#6b7c85">ரத்து</button><button id="cok" style="flex:1">மாற்று</button></div></div></div>
+<div id="vid">
+  <video id="rv" autoplay playsinline></video><div id="st" style="position:absolute;left:10px;top:10px;color:#fff;font-size:13px;background:rgba(0,0,0,.5);padding:4px 8px;border-radius:8px"></div><video id="lv" autoplay playsinline muted></video>
+  <div id="ctl"><button id="mute">🎤</button><button id="hang" class="red">❌ முடி</button></div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+const firebaseConfig = {
+  apiKey: "AIzaSyA4jxhq4Du8RzcNbINAJOSIIV1tPTOX24o",
+  authDomain: "our-chat-57278.firebaseapp.com",
+  projectId: "our-chat-57278",
+  storageBucket: "our-chat-57278.firebasestorage.app",
+  messagingSenderId: "296738950584",
+  appId: "1:296738950584:web:6d573663597aabfb3ed34d"
+};
+// ===== இங்கே இருவரின் Gmail + ஒவ்வொருவருக்கும் ஒரு ரகசிய ntfy topic =====
+const MEMBERS = {
+  "gnanasekar308@gmail.com": "chat-g-17a33c01df780b524411",
+  "subasri0112@gmail.com": "chat-s-63b3b925d40fc37f7e92"
+};
+const VAPID_PUB="BKGwGqwRNoBlqiK6NnUj49baitsygCPwEVRM4CV0ItcwnvahrQSQXGYrPkpIHKMqIxGzcAepOQt33g993Z9xOxE";
+const WORKER_URL="https://ourchat-push.gnanasekar308.workers.dev"; // Cloudflare Worker URL இங்கே
+const TURN = null; // தேவைப்பட்டால்: {urls:"turn:HOST:80", username:"..", credential:".."}
+// =====================================================================
+
+const $ = id => document.getElementById(id);
+const LS = { get:k=>{try{return localStorage.getItem(k)}catch(e){return null}}, set:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}} };
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth(), db = firebase.firestore();
+db.settings({experimentalAutoDetectLongPolling:true, merge:true});
+db.enablePersistence({synchronizeTabs:true}).catch(()=>{});
+const room = db.collection('rooms').doc('main');
+const callDoc = room.collection('calls').doc('current');
+let me, myEmail, name, first = true, started = false;
+
+let spMode='link', resetMode=false;
+const EP=firebase.auth.EmailAuthProvider;
+function show(id){ $('ld').style.display=id==='ld'?'block':'none'; $('lf').style.display=id==='lf'?'flex':'none'; $('sp').style.display=id==='sp'?'flex':'none' }
+// எந்த password-ஐயும் வைக்கலாம்: அதிலிருந்து வலுவான key உருவாக்கி Firebase-க்கு அனுப்பப்படும்
+async function dk(pw,email){
+  const k=await crypto.subtle.importKey('raw',new TextEncoder().encode(pw),'PBKDF2',false,['deriveBits']);
+  const bits=await crypto.subtle.deriveBits({name:'PBKDF2',hash:'SHA-256',salt:new TextEncoder().encode('ourchat:'+email.toLowerCase()),iterations:100000},k,256);
+  return btoa(String.fromCharCode(...new Uint8Array(bits))).replace(/[+/=]/g,'x');
+}
+async function gsign(reset){
+  resetMode=reset; $('err').textContent='';
+  try{ await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()) }catch(e){ resetMode=false; $('err').textContent=e.code }
+}
+$('go').onclick=()=>gsign(false);
+$('fg').onclick=()=>gsign(true);
+$('pl').onclick = async()=>{
+  $('err').textContent=''; const e=$('em').value.trim().toLowerCase(), p=$('pw').value;
+  if(!e||!p){ $('err').textContent='Email, password இரண்டும் வேண்டும்'; return }
+  try{ await auth.signInWithEmailAndPassword(e,await dk(p,e)); LS.set('em',e) }
+  catch(x){ $('err').textContent = ['auth/invalid-credential','auth/wrong-password','auth/user-not-found'].includes(x.code) ? 'Email அல்லது password தவறு. முதல் முறை என்றால் Google பொத்தானை அழுத்தவும்' : x.code }
+};
+$('pw').addEventListener('keydown',e=>{ if(e.key==='Enter') $('pl').click() });
+$('ps').onclick = async()=>{
+  const u=auth.currentUser, a=$('p1').value, b=$('p2').value;
+  if(a.length<4){ $('err').textContent='குறைந்தது 4 எழுத்துகள் வேண்டும்'; return }
+  if(a!==b){ $('err').textContent='இரண்டும் ஒன்றாக இல்லை'; return }
+  try{
+    const k=await dk(a,u.email);
+    if(spMode==='reset') await u.updatePassword(k); else await u.linkWithCredential(EP.credential(u.email,k));
+    LS.set('em',u.email); resetMode=false; enter(auth.currentUser);
+  }catch(e){
+    if(e.code==='auth/requires-recent-login'){ $('err').textContent='மீண்டும் Google மூலம் உள்நுழையுங்கள்'; auth.signOut() }
+    else $('err').textContent = e.code==='auth/operation-not-allowed' ? 'Firebase-ல் Email/Password ஆன் செய்யவில்லை' : e.code
+  }
+};
+$('out').onclick = ()=>auth.signOut().then(()=>location.reload());
+$('bell').onclick = ()=>enablePush(false);
+// ===== Password மாற்று (தனி setup) =====
+$('cpk').onclick=()=>{ ['c0','c1','c2'].forEach(i=>$(i).value=''); $('cerr').textContent=''; $('cpw').style.display='flex' };
+$('cx').onclick=()=>{ $('cpw').style.display='none' };
+$('cok').onclick=async()=>{
+  const u=auth.currentUser, o=$('c0').value, n=$('c1').value, m=$('c2').value;
+  if(!o){ $('cerr').textContent='பழைய password உள்ளிடுங்கள்'; return }
+  if(n.length<4){ $('cerr').textContent='புதியது குறைந்தது 4 எழுத்துகள்'; return }
+  if(n!==m){ $('cerr').textContent='புதியது இரண்டும் ஒன்றாக இல்லை'; return }
+  try{
+    await u.reauthenticateWithCredential(EP.credential(u.email,await dk(o,u.email)));
+    await u.updatePassword(await dk(n,u.email));
+    $('cpw').style.display='none'; alert('✅ Password மாற்றப்பட்டது');
+  }catch(e){ $('cerr').textContent = ['auth/invalid-credential','auth/wrong-password'].includes(e.code) ? 'பழைய password தவறு' : e.code }
+};
+function enter(u){
+  if(started) return; started = true;
+  me = u.uid; myEmail = u.email; name = (u.displayName||u.email).split(' ')[0];
+  $('login').style.display='none'; $('chat').style.display='flex';
+  startChat(); startCalls(); enablePush(true);
+}
+// ஆப் மூடி மீண்டும் திறந்தால் password கேட்கும்
+auth.setPersistence(firebase.auth.Auth.Persistence.SESSION).catch(()=>{});
+auth.onAuthStateChanged(u=>{
+  if(!u){ show('lf'); $('em').value=LS.get('em')||''; return; }
+  if(!MEMBERS[u.email]){ $('err').textContent = u.email+' அனுமதிக்கப்படவில்லை'; auth.signOut(); return; }
+  const hasPw=u.providerData.some(p=>p.providerId==='password');
+  if(resetMode||!hasPw){
+    spMode=resetMode?'reset':'link';
+    $('spt').textContent=resetMode?'புதிய password அமைக்கவும் (எதுவும் வைக்கலாம்)':'முதல் முறை: ஒரு password அமைக்கவும். எதுவும் வைக்கலாம் (குறைந்தது 4). அடுத்த முறை இதையே பயன்படுத்துவீர்கள்.';
+    $('err').textContent=''; show('sp'); return;
+  }
+  LS.set('em',u.email); enter(u);
+});
+
+const KEEP_MS=24*60*60*1000; // செய்தி எவ்வளவு நேரம் இருக்கும் (24 மணி நேரம்)
+const DAY=864e5; let curDocs=[], sig='';
+const vis=(x,n)=>x.ms>n-DAY && !(x.sched&&x.uid!==me&&x.ms>n);
+function tick(){ const n=Date.now(), v=curDocs.filter(x=>vis(x,n)); const s=v.length+':'+v.filter(x=>x.sched&&x.ms>n).length; if(s!==sig) draw(curDocs) }
+async function cleanup(){
+  try{
+    const s=await room.collection('messages').where('ts','<',firebase.firestore.Timestamp.fromMillis(Date.now()-DAY)).limit(400).get();
+    if(s.empty) return; const b=db.batch(); s.docs.forEach(d=>b.delete(d.ref)); await b.commit();
+  }catch(e){}
+}
+function draw(all){
+  curDocs=all; const n=Date.now(), box=$('msgs'); box.textContent=''; let last='';
+  const docs=all.filter(x=>vis(x,n));
+  sig=docs.length+':'+docs.filter(x=>x.sched&&x.ms>n).length;
+  docs.forEach(x=>{
+    const d=new Date(x.ms), day=d.toDateString(), fut=x.sched&&x.ms>n;
+    if(day!==last){ last=day; const p=document.createElement('div'); p.className='dt'; p.textContent=day===new Date().toDateString()?'இன்று':d.toLocaleDateString('ta-IN',{day:'numeric',month:'short',year:'numeric'}); box.appendChild(p) }
+    const el=document.createElement('div'); el.className='m'+(x.uid===me?' me':'')+(fut?' sd':'');
+    const b=document.createElement('div'); b.textContent=x.text;
+    const t=document.createElement('div'); t.className='tm';
+    const ts=document.createElement('span');
+    ts.textContent=fut?('⏰ '+d.toLocaleString([],{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})):d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+    t.appendChild(ts);
+    if(x.uid===me){
+      const dot=document.createElement('span');
+      const offline=!navigator.onLine;
+      let cls, title;
+      if(offline && x.pending){ cls='red'; title='அனுப்பப்படவில்லை — network இல்லை' }
+      else if(x.pending){ cls='yellow'; title='அனுப்பிக்கொண்டிருக்கிறது...' }
+      else{ cls='green'; title='அனுப்பப்பட்டது' }
+      dot.className='dot '+cls; dot.title=title;
+      t.appendChild(dot);
+    }
+    el.append(b,t); box.appendChild(el);
+  });
+  const o=[...docs].reverse().find(x=>x.uid!==me&&x.name);
+  if(o){ $('fn').textContent=o.name; $('av').textContent=o.name[0].toUpperCase(); LS.set('friend',o.name) }
+  box.scrollTop=box.scrollHeight;
+}
+function startChat(){
+  cleanup(); setInterval(cleanup,600000); setInterval(tick,5000);
+  const key='cache2_'+me; const f=LS.get('friend'); if(f){$('fn').textContent=f;$('av').textContent=f[0].toUpperCase()} try{ draw(JSON.parse(LS.get(key)||'[]')) }catch(e){}
+  room.collection('messages').orderBy('ts').limitToLast(300).onSnapshot(s=>{
+    const docs = s.docs.map(d=>{const x=d.data();return{uid:x.uid,name:x.name,text:x.text,sched:!!x.sched,ms:x.ts?x.ts.toMillis():Date.now(),pending:d.metadata.hasPendingWrites}}); draw(docs); LS.set(key, JSON.stringify(docs.slice(-200)));
+    first=false;
+  });
+}
+async function cleanOld(){
+  try{
+    const cut=firebase.firestore.Timestamp.fromMillis(Date.now()-KEEP_MS);
+    const s=await room.collection('messages').where('ts','<',cut).limit(400).get();
+    if(s.empty) return;
+    const bt=db.batch(); s.docs.forEach(d=>bt.delete(d.ref)); await bt.commit();
+  }catch(e){}
+}
+async function ping(_,at){
+  if(!WORKER_URL) return;
+  try{
+    const other=Object.keys(MEMBERS).find(e=>e!==myEmail);
+    const d=await room.collection('subs').doc(other).get(); const eps=(d.data()||{}).eps||[];
+    if(!eps.length){ if(at) alert('⚠️ மற்றவர் 🔔 அழுத்தி Allow கொடுக்கவில்லை. அதனால் நேரத்தில் notification வராது.'); return }
+    const r=await fetch(WORKER_URL,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(at?{endpoints:eps,at}:{endpoints:eps})});
+    if(at){
+      let j={}; try{ j=await r.json() }catch(e){}
+      if(!j.queued) alert('⚠️ Schedule server தயாராக இல்லை. Cloudflare-ல் புதிய worker.js paste செய்து Deploy செய்யுங்கள்.');
+    }
+  }catch(e){ if(at) alert('⚠️ Schedule அனுப்ப முடியவில்லை: '+e.message) }
+}
+const u8=b=>{const p='='.repeat((4-b.length%4)%4),r=atob((b+p).replace(/-/g,'+').replace(/_/g,'/'));return Uint8Array.from(r,c=>c.charCodeAt(0))};
+async function enablePush(quiet){
+  if(!('serviceWorker' in navigator)||!('PushManager' in window)){ if(!quiet) alert('இந்த browser push ஆதரிக்கவில்லை'); return }
+  if(Notification.permission!=='granted'){ if(quiet) return; if(await Notification.requestPermission()!=='granted'){ alert('Notification அனுமதி வேண்டும்'); return } }
+  try{
+    const reg=await navigator.serviceWorker.ready;
+    let sub=await reg.pushManager.getSubscription();
+    if(sub&&LS.get('vapid')!==VAPID_PUB){ await sub.unsubscribe(); sub=null }
+    if(!sub) sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:u8(VAPID_PUB)});
+    LS.set('vapid',VAPID_PUB);
+    await room.collection('subs').doc(myEmail).set({eps:firebase.firestore.FieldValue.arrayUnion(sub.endpoint)},{merge:true});
+    if(!quiet) alert('✅ Notification ஆன் ஆனது');
+  }catch(e){ if(!quiet) alert('Push பிழை: '+e.message) }
+}
+function send(){
+  const v=$('t').value.trim(); if(!v) return; $('t').value='';
+  room.collection('messages').add({uid:me,name,text:v,ts:firebase.firestore.FieldValue.serverTimestamp()});
+  ping('💬 புதிய செய்தி');
+}
+$('s').onclick=send;
+$('sc').onclick=()=>{
+  if(!$('t').value.trim()){ alert('முதலில் செய்தி எழுதுங்கள்'); return }
+  const d=new Date(Date.now()+3600e3); d.setMinutes(d.getMinutes()-d.getTimezoneOffset());
+  $('sdt').value=d.toISOString().slice(0,16); $('sch').style.display='flex';
+};
+$('sx').onclick=()=>{ $('sch').style.display='none' };
+$('sok').onclick=()=>{
+  const at=new Date($('sdt').value).getTime();
+  if(!at||at<=Date.now()+30000){ alert('எதிர்கால நேரம் தேர்ந்தெடுங்கள்'); return }
+  const v=$('t').value.trim(); $('t').value=''; $('sch').style.display='none';
+  room.collection('messages').add({uid:me,name,text:v,sched:true,ts:firebase.firestore.Timestamp.fromMillis(at)});
+  ping(null,at);
+}; $('t').addEventListener('keydown',e=>{ if(e.key==='Enter') send() });
+
+// ===== Video call (WebRTC, signaling = Firestore) =====
+const ICE = {iceServers:[{urls:'stun:stun.l.google.com:19302'}].concat(TURN?[].concat(TURN):[])};
+let pc=null, stream=null, callId=null, unsubIce=null, pending=null, queue=[];
+async function media(){ stream = await navigator.mediaDevices.getUserMedia({video:true,audio:true}); $('lv').srcObject=stream; $('vid').style.display='flex'; }
+function addC(c){ pc.remoteDescription ? pc.addIceCandidate(c).catch(()=>{}) : queue.push(c) }
+function flush(){ queue.splice(0).forEach(c=>pc.addIceCandidate(c).catch(()=>{})) }
+function newPC(){
+  pc = new RTCPeerConnection(ICE); queue=[];
+  stream.getTracks().forEach(t=>pc.addTrack(t,stream));
+  pc.ontrack = e=>{ $('rv').srcObject = e.streams[0] };
+  pc.onicecandidate = e=>{ if(e.candidate) room.collection('ice').add({callId,from:me,c:JSON.stringify(e.candidate)}) };
+  pc.oniceconnectionstatechange = ()=>{ if(pc) $('st').textContent='நிலை: '+pc.iceConnectionState };
+  pc.onconnectionstatechange = ()=>{ if(pc && pc.connectionState==='failed') alert('இணைப்பு தோல்வி. TURN server தேவைப்படலாம்.') };
+  unsubIce = room.collection('ice').where('callId','==',callId).onSnapshot(s=>s.docChanges().forEach(ch=>{
+    if(ch.type==='added'){ const d=ch.doc.data(); if(d.from!==me) addC(JSON.parse(d.c)) }
+  }));
+}
+function end(del){
+  if(unsubIce){unsubIce();unsubIce=null}
+  if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}
+  if(pc){pc.close();pc=null}
+  $('vid').style.display='none'; $('rv').srcObject=null;
+  if(del) callDoc.delete().catch(()=>{});
+}
+async function call(){
+  try{ await media() }catch(e){ alert('Camera/mic பிழை: '+e.name+' — அனுமதி கொடுங்கள்'); return }
+  callId = String(Date.now()); newPC(); $('st').textContent='அழைக்கிறது...';
+  const o = await pc.createOffer(); await pc.setLocalDescription(o);
+  await callDoc.set({callId,from:me,fromName:name,offer:{type:o.type,sdp:o.sdp},answer:null});
+  ping('📞 வீடியோ அழைப்பு');
+}
+async function accept(){
+  const d=pending; $('inc').style.display='none';
+  try{ await media() }catch(e){ alert('Camera/mic பிழை: '+e.name+' — அனுமதி கொடுங்கள்'); return }
+  callId=d.callId; newPC();
+  await pc.setRemoteDescription(d.offer); flush();
+  const a = await pc.createAnswer(); await pc.setLocalDescription(a);
+  await callDoc.update({answer:{type:a.type,sdp:a.sdp}});
+}
+function startCalls(){
+  callDoc.onSnapshot(s=>{
+    const d=s.data();
+    if(!d){ $('inc').style.display='none'; if(pc) end(false); return; }
+    if(d.from===me){
+      if(d.answer && pc && !pc.remoteDescription) pc.setRemoteDescription(d.answer).then(flush);
+    }else if(!d.answer && !pc && Date.now()-Number(d.callId)<60000){
+      pending=d; $('who').textContent='📞 '+d.fromName+' அழைக்கிறார்'; $('inc').style.display='flex';
+    }else if(d.answer && !pc){ $('inc').style.display='none' }
+  });
+}
+$('call').onclick=call; $('acc').onclick=accept;
+$('dec').onclick=()=>{ $('inc').style.display='none'; callDoc.delete().catch(()=>{}) };
+$('hang').onclick=()=>end(true);
+$('mute').onclick=()=>{ const t=stream&&stream.getAudioTracks()[0]; if(t){ t.enabled=!t.enabled; $('mute').textContent=t.enabled?'🎤':'🔇' } };
+if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
+window.addEventListener('online',()=>draw(curDocs));
+window.addEventListener('offline',()=>draw(curDocs));
+</script></body></html>
