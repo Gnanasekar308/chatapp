@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="ta"><head><meta charset="utf-8"><title>VAPID Key Generator</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+body{font-family:system-ui,"Noto Sans Tamil",sans-serif;max-width:640px;margin:24px auto;padding:0 16px;line-height:1.5}
+button{padding:12px 20px;font-size:16px;border:0;border-radius:8px;background:#00a884;color:#fff}
+textarea{width:100%;box-sizing:border-box;font-family:monospace;font-size:13px;padding:8px;margin:4px 0 12px}
+.warn{background:#fff3cd;padding:10px;border-radius:8px}
+</style></head><body>
+<h2>🔑 புதிய VAPID key உருவாக்கி</h2>
+<p class="warn">இந்தப் பக்கம் உங்கள் browser-லேயே key உருவாக்குகிறது. எதுவும் இணையத்துக்கு அனுப்பப்படாது.
+<b>Private key-ஐ யாரிடமும் பகிர வேண்டாம்; GitHub-ல் வைக்க வேண்டாம்; chat-ல் paste செய்ய வேண்டாம்.</b></p>
+<button id="g">புதிய keys உருவாக்கு</button>
+<h3>Public key → index.html (VAPID_PUB) மற்றும் Cloudflare (VAPID_PUBLIC)</h3>
+<textarea id="pub" rows="3" readonly></textarea>
+<h3>Private key → Cloudflare Secret (VAPID_PRIVATE) மட்டும்</h3>
+<textarea id="prv" rows="2" readonly></textarea>
+<script>
+const enc=b=>btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+document.getElementById('g').onclick=async()=>{
+  const kp=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']);
+  const jwk=await crypto.subtle.exportKey('jwk',kp.privateKey);
+  const raw=await crypto.subtle.exportKey('raw',kp.publicKey);
+  document.getElementById('pub').value=enc(raw);
+  document.getElementById('prv').value=jwk.d;
+};
+</script></body></html>

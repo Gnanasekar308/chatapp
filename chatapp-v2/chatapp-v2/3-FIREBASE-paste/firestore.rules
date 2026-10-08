@@ -1,0 +1,34 @@
+// Firebase Console → Firestore Database → Rules-ல் paste செய்து Publish செய்யவும்.
+// ❗ இரண்டு Gmail முகவரிகளை உங்களுடையதாக மாற்றுங்கள். இந்த file-ஐ GitHub-ல் ஏற்ற வேண்டாம்.
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function member() {
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email in ['EMAIL_1@gmail.com', 'EMAIL_2@gmail.com'];
+    }
+
+    match /rooms/{room} {
+      allow read, write: if member();            // seen / typing நிலை
+
+      match /messages/{id} {
+        allow read: if member();
+        allow create: if member()
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.text is string
+          && request.resource.data.text.size() <= 4000
+          && (!('img' in request.resource.data) || request.resource.data.img.size() < 450000);
+        // சொந்த செய்தி அல்லது காலாவதியான செய்தியை மட்டும் அழிக்கலாம்
+        allow delete: if member()
+          && (resource.data.uid == request.auth.uid || resource.data.exp < request.time);
+      }
+
+      match /calls/{id} { allow read, write: if member(); }
+      match /ice/{id}   { allow read, write: if member(); }
+      match /subs/{id}  { allow read, write: if member(); }
+    }
+    // மற்ற எல்லாம் தடை (இயல்பாகவே)
+  }
+}
