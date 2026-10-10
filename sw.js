@@ -1,72 +1,42 @@
-// Our Chat — Service Worker v7
-const C = 'ourchat-v7';
-const A = ['./', 'index.html', 'manifest.json', 'icon-192.png', 'icon-512.png'];
-
-self.addEventListener('install', e => {
-  e.waitUntil(caches.open(C).then(c => c.addAll(A)));
-  self.skipWaiting();
+'use strict';
+const CACHE = 'ourchat-shell-v4';
+const ASSETS = [
+  './', './index.html', './src/styles.css', './src/app.js', './manifest.webmanifest',
+  './assets/icon-192.png', './assets/icon-512.png'
+];
+self.addEventListener('install', event => {
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE);
+    await cache.addAll(ASSETS);
+    await self.skipWaiting();
+  })());
 });
-
-self.addEventListener('activate', e => {
-  e.waitUntil(
-    caches.keys()
-      .then(ks => Promise.all(ks.filter(k => k !== C).map(k => caches.delete(k))))
-      .then(() => clients.claim())
-  );
+self.addEventListener('activate', event => {
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(keys.filter(key => key.startsWith('ourchat-shell-') && key !== CACHE).map(key => caches.delete(key)));
+    await self.clients.claim();
+  })());
 });
-
-// வெற்றிகரமான response-ஐ மட்டும் cache-ல் சேமி
-const store = (r, x) => {
-  if (x && (x.ok || x.type === 'opaque')) {
-    const cp = x.clone();
-    caches.open(C).then(c => c.put(r, cp));
-  }
-  return x;
-};
-
-self.addEventListener('fetch', e => {
-  const r = e.request;
-  if (r.method !== 'GET') return;
-  const u = new URL(r.url);
-
-  // Firebase SDK: cache-first
-  if (u.hostname === 'www.gstatic.com' && u.pathname.startsWith('/firebasejs/')) {
-    e.respondWith(caches.match(r).then(h => h || fetch(r).then(x => store(r, x))));
-    return;
-  }
-  if (u.origin !== location.origin) return;
-
-  // உடனே திறக்கும்; பின்னணியில் புதுப்பிக்கும்
-  e.respondWith(
-    caches.match(r).then(h => {
-      const n = fetch(r).then(x => store(r, x)).catch(() => h);
-      return h || n;
-    })
-  );
-});
-
-self.addEventListener('push', e => {
-  e.waitUntil(
-    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(cs => {
-      if (cs.some(c => c.visibilityState === 'visible' && c.focused)) return;
-      return self.registration.showNotification('Our Chat', {
-        body: '💬 புதிய செய்தி அல்லது அழைப்பு',
-        icon: 'icon-192.png',
-        badge: 'icon-192.png',
-        tag: 'oc',
-        renotify: true,
-        vibrate: [200, 100, 200]
-      });
-    })
-  );
-});
-
-self.addEventListener('notificationclick', e => {
-  e.notification.close();
-  e.waitUntil(
-    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(cs => {
-      for (const c of cs) { if ('focus' in c) return c.focus(); }
-      return clients.openWindow('./');
-    })
-  );
+self.addEventListener('fetch', event => {
+  const request = event.request;
+  if (request.method !== 'GET' || new URL(request.url).origin !== self.location.origin) return;
+  event.respondWith((async () => {
+    const cached = await caches.match(request);
+    if (cached) return cached;
+    try {
+      const response = await fetch(request);
+      if (response && response.ok && response.type === 'basic') {
+        const cache = await caches.open(CACHE);
+        cache.put(request, response.clone()).catch(() => {});
+      }
+      return response;
+    } catch (error) {
+      if (request.mode === 'navigate') {
+        const fallback = await caches.match('./index.html');
+        if (fallback) return fallback;
+      }
+      return Response.error();
+    }
+  })());
 });
