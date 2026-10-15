@@ -1,7 +1,7 @@
 // OurChat live chat: Firebase login + real-time messages for the two allowed people.
 import { auth, db } from './firebase.js';
 import { signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
-import { collection, doc, setDoc, query, orderBy, limit, onSnapshot, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+import { collection, doc, setDoc, deleteDoc, Timestamp, query, orderBy, limit, onSnapshot, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
 const ALLOWED = ['gnanasekar308@gmail.com', 'venkathu0637@gmail.com'];
 const $ = selector => document.querySelector(selector);
@@ -13,6 +13,7 @@ let lastDocs = [];
 let nextExpiry = 0;
 let uiReady = false;
 const failed = new Map();
+const deleting = new Set();
 
 function toast(message) {
   const el = $('#toast');
@@ -145,6 +146,19 @@ function render() {
   if (stick) messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
+// ---------- delete expired messages from the database ----------
+function cleanupExpired() {
+  const now = Date.now();
+  for (const m of lastDocs) {
+    if (m.pending || !m.expiresAtMs || m.expiresAtMs > now || deleting.has(m.id)) continue;
+    deleting.add(m.id);
+    deleteDoc(doc(db, 'messages', m.id)).catch(error => {
+      console.warn('Delete expired failed', error);
+      deleting.delete(m.id);
+    });
+  }
+}
+
 // ---------- sending ----------
 async function send(text, existing) {
   if (!me) { toast('Please sign in first.'); return; }
@@ -152,7 +166,7 @@ async function send(text, existing) {
   const expiresAtMs = existing ? existing.exp : Date.now() + (window.ourchatGetExpiryMs ? window.ourchatGetExpiryMs() : 86400000);
   failed.delete(id);
   try {
-    await setDoc(doc(db, 'messages', id), { text, senderEmail: me, createdAt: serverTimestamp(), expiresAtMs });
+    await setDoc(doc(db, 'messages', id), { text, senderEmail: me, createdAt: serverTimestamp(), expiresAtMs, expiresAt: Timestamp.fromMillis(expiresAtMs) });
   } catch (error) {
     console.warn('Send failed', error);
     failed.set(id, { text, exp: expiresAtMs, at: Date.now() });
@@ -183,6 +197,7 @@ function startChat(email) {
       return { id: d.id, text: String(data.text || ''), senderEmail: data.senderEmail, date: created, expiresAtMs: Number(data.expiresAtMs) || 0, pending: d.metadata.hasPendingWrites };
     }).reverse();
     render();
+    cleanupExpired();
   }, error => {
     console.warn('Listen failed', error);
     messagesEl.innerHTML = `<div class="chat-empty">Could not load messages (${escapeHtml(error.code || 'error')}).</div>`;
@@ -206,4 +221,4 @@ onAuthStateChanged(auth, user => {
   startChat(email);
 });
 
-setInterval(() => { if (nextExpiry && nextExpiry <= Date.now()) render(); }, 10000);
+setInterval(() => { if (nextExpiry && nextExpiry <= Date.now()) render(); cleanupExpired(); }, 10000);

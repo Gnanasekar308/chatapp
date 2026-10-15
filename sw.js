@@ -1,5 +1,5 @@
 'use strict';
-const CACHE = 'ourchat-shell-v5';
+const CACHE = 'ourchat-shell-v6';
 const ASSETS = [
   './', './index.html', './src/styles.css', './src/chat.css', './src/app.js', './src/chat.js', './src/firebase.js',
   './manifest.webmanifest', './assets/icon-192.png', './assets/icon-512.png'
