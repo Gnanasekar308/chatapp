@@ -7,6 +7,7 @@
   <meta name="description" content="A private, elegant chat space with timed messages and reminders." />
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="stylesheet" href="src/styles.css" />
+  <link rel="stylesheet" href="src/chat.css" />
   <title>OurChat · Private Chat</title>
 </head>
 <body>
@@ -47,5 +48,6 @@
   <div class="toast" id="toast" role="status"></div>
   <dialog id="actionDialog"><form method="dialog" id="actionForm"><div class="dialog-head"><div><p class="eyebrow">OURCHAT TOOLS</p><h2 id="dialogTitle">Set a timer</h2></div><button class="icon-btn" value="cancel" aria-label="Close">×</button></div><div id="dialogBody"></div><div class="dialog-actions"><button class="secondary-btn" value="cancel">Cancel</button><button class="primary-btn" id="dialogSave" value="default">Save</button></div></form></dialog>
   <script type="module" src="src/app.js"></script>
+  <script type="module" src="src/chat.js"></script>
 </body>
 </html>

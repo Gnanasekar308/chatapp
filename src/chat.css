@@ -1,0 +1,10 @@
+#loginOverlay{position:fixed;inset:0;z-index:50;display:grid;place-items:center;padding:20px;background:radial-gradient(ellipse at 65% -10%,#28223e 0%,transparent 45%),#10111b}
+.login-card{width:min(380px,100%);background:#1b1d2c;border:1px solid #3b3d54;border-radius:20px;padding:26px;box-shadow:0 25px 100px #0009}
+.login-card h2{font:800 24px Inter,'Segoe UI',sans-serif;margin:0 0 6px}
+.login-card .login-sub{color:#8c91a9;font-size:12px;margin:0 0 8px}
+.login-card .primary-btn{width:100%;margin-top:18px;padding:13px;font-size:13px}
+.login-card .primary-btn:disabled{opacity:.6;cursor:wait}
+.login-error{color:var(--red);font-size:12px;min-height:16px;margin:12px 0 0}
+.chat-empty{margin:auto;color:#777d96;font-size:12px;text-align:center}
+.retry-btn{background:transparent;border:1px solid #6b3b45;color:var(--red);border-radius:8px;font-size:9px;padding:2px 7px}
+.rail .avatar.tiny{cursor:pointer}

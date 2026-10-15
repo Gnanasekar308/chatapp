@@ -1,8 +1,8 @@
 'use strict';
-const CACHE = 'ourchat-shell-v4';
+const CACHE = 'ourchat-shell-v5';
 const ASSETS = [
-  './', './index.html', './src/styles.css', './src/app.js', './manifest.webmanifest',
-  './assets/icon-192.png', './assets/icon-512.png'
+  './', './index.html', './src/styles.css', './src/chat.css', './src/app.js', './src/chat.js', './src/firebase.js',
+  './manifest.webmanifest', './assets/icon-192.png', './assets/icon-512.png'
 ];
 self.addEventListener('install', event => {
   event.waitUntil((async () => {
@@ -18,12 +18,11 @@ self.addEventListener('activate', event => {
     await self.clients.claim();
   })());
 });
+// Network first: new versions show up right away; cache is only used when offline.
 self.addEventListener('fetch', event => {
   const request = event.request;
   if (request.method !== 'GET' || new URL(request.url).origin !== self.location.origin) return;
   event.respondWith((async () => {
-    const cached = await caches.match(request);
-    if (cached) return cached;
     try {
       const response = await fetch(request);
       if (response && response.ok && response.type === 'basic') {
@@ -32,6 +31,8 @@ self.addEventListener('fetch', event => {
       }
       return response;
     } catch (error) {
+      const cached = await caches.match(request);
+      if (cached) return cached;
       if (request.mode === 'navigate') {
         const fallback = await caches.match('./index.html');
         if (fallback) return fallback;

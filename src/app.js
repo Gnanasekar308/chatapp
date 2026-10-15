@@ -15,6 +15,7 @@ let toastTimer = null;
 let currentExpiryMs = 24 * 60 * 60 * 1000;
 const messageExpiryTimers = new WeakMap();
 const reminderTimers = new Map();
+window.ourchatGetExpiryMs = () => currentExpiryMs;
 
 function safeStorageGet(key) {
   try { return localStorage.getItem(key); } catch { return null; }
@@ -55,7 +56,7 @@ function removeAfterExpiry(row, expiresAt) {
   // Long browser timers are capped; check again if the expiry is farther away.
   messageExpiryTimers.set(row, setTimeout(() => {
     if (Date.now() < expiresAt) removeAfterExpiry(row, expiresAt);
-    else { row.remove(); toast('Demo message expired on this device.'); }
+    else if (row.isConnected) { row.remove(); toast('Demo message expired on this device.'); }
   }, Math.min(remaining, 2147480000)));
 }
 function addMessage(text, status = 'sent', scheduledAt = null) {
@@ -218,7 +219,8 @@ composer.addEventListener('submit', event => {
   event.preventDefault();
   const text = input.value.trim();
   if (!text) { input.focus(); return; }
-  addMessage(text);
+  if (typeof window.ourchatSend === 'function') window.ourchatSend(text);
+  else addMessage(text);
   input.value = '';
   input.style.height = 'auto';
 });
