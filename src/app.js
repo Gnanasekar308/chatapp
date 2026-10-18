@@ -238,6 +238,11 @@ dialog.addEventListener('keydown', event => {
   if (event.target && event.target.tagName === 'INPUT') { event.preventDefault(); $('#dialogSave').click(); }
 });
 dialog.addEventListener('cancel', event => event.preventDefault());
+// x and Cancel must always close the box, even when a required field is still empty.
+$$('button[value="cancel"]', dialog).forEach(button => button.addEventListener('click', event => {
+  event.preventDefault();
+  dialog.close();
+}));
 $('#actionForm').addEventListener('submit', event => {
   if (event.submitter?.value === 'cancel') return;
   event.preventDefault();
