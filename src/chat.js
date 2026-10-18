@@ -21,6 +21,8 @@ const failed = new Map();
 const deleting = new Set();
 let unsubscribeSession = null;
 let kicking = false;
+let firstSnapshot = true;
+let replyTarget = null;
 
 // One id per browser/device (kept in localStorage). Same browser = same id, so refresh and extra tabs are fine.
 function getDeviceId() {
@@ -186,6 +188,13 @@ function setupUi() {
     oldTimer.replaceWith(timer);
     timer.addEventListener('click', openSchedule);
   }
+  // Settings (gear) button opens our Settings box.
+  const oldSettings = $('#settingsNav');
+  if (oldSettings) {
+    const gear = oldSettings.cloneNode(true);
+    oldSettings.replaceWith(gear);
+    gear.addEventListener('click', openSettings);
+  }
   // Privacy button next to Reminder.
   const reminderBtn = $('#reminderBtn');
   if (reminderBtn && !$('#privacyBtn')) {
@@ -228,7 +237,7 @@ function render() {
     items.push({ ...m, mine: mineMsg, scheduled, at: new Date(m.visibleAtMs || m.created.getTime()) });
   }
   for (const [id, f] of failed) {
-    if (!lastDocs.some(m => m.id === id)) items.push({ id, text: f.text, senderEmail: me, mine: true, scheduled: false, failed: true, expiresAtMs: f.exp, at: new Date(f.vis || f.at) });
+    if (!lastDocs.some(m => m.id === id)) items.push({ id, text: f.text, senderEmail: me, mine: true, scheduled: false, failed: true, expiresAtMs: f.exp, replyTo: f.reply || null, at: new Date(f.vis || f.at) });
   }
   items.sort((a, b) => a.at - b.at);
   if (privacy) {
@@ -274,7 +283,12 @@ function render() {
       else status = '<span class="status sent">● Sent</span>';
     }
     const del = `<button type="button" class="msg-del" data-id="${escapeHtml(m.id)}" title="Delete" aria-label="Delete message">🗑</button>`;
-    row.innerHTML = `<div class="bubble${m.scheduled ? ' scheduled' : ''}"><p>${escapeHtml(m.text)}</p><div class="message-meta"><time>${escapeHtml(time)}</time>${status}${expiry}${del}</div></div>`;
+    row.dataset.rowId = m.id;
+    const quote = m.replyTo && m.replyTo.text
+      ? `<div class="reply-quote" data-id="${escapeHtml(m.replyTo.id)}"><b>${escapeHtml(m.replyTo.by === me ? 'You' : prettyName(m.replyTo.by || 'them'))}</b><span>${escapeHtml(m.replyTo.text)}</span></div>`
+      : '';
+    const replyBtn = m.failed ? '' : `<button type="button" class="msg-reply" data-id="${escapeHtml(m.id)}" title="Reply" aria-label="Reply to message">↩</button>`;
+    row.innerHTML = `<div class="bubble${m.scheduled ? ' scheduled' : ''}">${quote}<p>${escapeHtml(m.text)}</p><div class="message-meta"><time>${escapeHtml(time)}</time>${status}${expiry}${replyBtn}${del}</div></div>`;
     messagesEl.appendChild(row);
   }
   const preview = $('#convPreview');
@@ -414,6 +428,37 @@ async function notifyOther(at) {
   }
 }
 
+// ---------- reply ----------
+const replyBar = document.createElement('div');
+replyBar.className = 'reply-bar hidden';
+const composerForm = $('#composer');
+if (composerForm) composerForm.parentNode.insertBefore(replyBar, composerForm);
+function updateReplyBar() {
+  if (!replyTarget) { replyBar.classList.add('hidden'); replyBar.innerHTML = ''; return; }
+  const who = replyTarget.by === me ? 'yourself' : prettyName(replyTarget.by || 'them');
+  replyBar.innerHTML = `<div><b>Replying to ${escapeHtml(who)}</b><span>${escapeHtml(replyTarget.text)}</span></div><button type="button" id="replyCancel" aria-label="Cancel reply">×</button>`;
+  replyBar.classList.remove('hidden');
+}
+replyBar.addEventListener('click', event => {
+  if (event.target.closest('#replyCancel')) { replyTarget = null; updateReplyBar(); }
+});
+function startReply(id) {
+  const m = lastDocs.find(x => x.id === id);
+  if (!m) return;
+  replyTarget = { id: m.id, text: m.text.length > 120 ? m.text.slice(0, 120) + '…' : m.text, by: m.senderEmail };
+  updateReplyBar();
+  const input = $('#messageInput');
+  if (input) input.focus();
+}
+function jumpToMessage(id) {
+  if (!id) return;
+  const row = [...messagesEl.querySelectorAll('.message-row')].find(el => el.dataset.rowId === id);
+  if (!row) { toast('That message is no longer there.'); return; }
+  row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  row.classList.add('flash');
+  setTimeout(() => row.classList.remove('flash'), 1300);
+}
+
 // ---------- sending ----------
 async function send(text, opts = {}) {
   if (!me) { toast('Please sign in first.'); return; }
@@ -422,14 +467,17 @@ async function send(text, opts = {}) {
   const expiryMs = window.ourchatGetExpiryMs ? window.ourchatGetExpiryMs() : 86400000;
   const expiresAtMs = opts.exp || (vis || Date.now()) + expiryMs;
   failed.delete(id);
+  let reply = opts.reply;
+  if (reply === undefined) { reply = replyTarget; replyTarget = null; updateReplyBar(); }
   const payload = { text, senderEmail: me, createdAt: serverTimestamp(), expiresAtMs, expiresAt: Timestamp.fromMillis(expiresAtMs) };
   if (vis) payload.visibleAtMs = vis;
+  if (reply && reply.id) payload.replyTo = { id: reply.id, text: reply.text, by: reply.by };
   try {
     await setDoc(doc(db, 'messages', id), payload);
     notifyOther(vis);
   } catch (error) {
     console.warn('Send failed', error);
-    failed.set(id, { text, exp: expiresAtMs, vis, at: Date.now() });
+    failed.set(id, { text, exp: expiresAtMs, vis, at: Date.now(), reply: reply || null });
     render();
     toast(error && error.code === 'permission-denied' ? 'Not allowed by Firestore rules.' : 'Message not sent. Tap Retry.');
   }
@@ -439,9 +487,13 @@ messagesEl.addEventListener('click', event => {
   const retry = event.target.closest('.retry-btn');
   if (retry) {
     const f = failed.get(retry.dataset.id);
-    if (f) send(f.text, { id: retry.dataset.id, exp: f.exp, vis: f.vis });
+    if (f) send(f.text, { id: retry.dataset.id, exp: f.exp, vis: f.vis, reply: f.reply || null });
     return;
   }
+  const replyButton = event.target.closest('.msg-reply');
+  if (replyButton) { startReply(replyButton.dataset.id); return; }
+  const quoted = event.target.closest('.reply-quote');
+  if (quoted) { jumpToMessage(quoted.dataset.id); return; }
   const del = event.target.closest('.msg-del');
   if (del) deleteMessage(del.dataset.id);
 });
@@ -475,6 +527,105 @@ function watchSession() {
   }).catch(error => console.warn('Session claim failed', error));
 }
 
+// ---------- settings: message sound ----------
+const SOUNDS = { off: '🔕 Off', ding: '🔔 Ding', pop: '💬 Pop', bell: '🛎 Bell', chime: '🎶 Chime' };
+let soundChoice = 'ding';
+try { soundChoice = localStorage.getItem('ourchat-sound') || 'ding'; } catch { /* storage blocked */ }
+if (!SOUNDS[soundChoice]) soundChoice = 'ding';
+let audioCtx = null;
+function getAudio() {
+  if (!audioCtx) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    audioCtx = new AC();
+  }
+  if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+  return audioCtx;
+}
+function tone(ctx, freq, start, dur, vol = 0.25, endFreq = 0) {
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(freq, start);
+  if (endFreq) osc.frequency.exponentialRampToValueAtTime(endFreq, start + dur);
+  gain.gain.setValueAtTime(0.0001, start);
+  gain.gain.exponentialRampToValueAtTime(vol, start + 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start(start);
+  osc.stop(start + dur + 0.05);
+}
+function playSound(name = soundChoice) {
+  if (name === 'off') return;
+  const ctx = getAudio();
+  if (!ctx) return;
+  const t = ctx.currentTime + 0.02;
+  if (name === 'ding') tone(ctx, 880, t, 0.5);
+  else if (name === 'pop') tone(ctx, 700, t, 0.14, 0.3, 180);
+  else if (name === 'bell') { tone(ctx, 660, t, 1.0, 0.2); tone(ctx, 1320, t, 0.7, 0.1); tone(ctx, 1980, t, 0.4, 0.05); }
+  else if (name === 'chime') [784, 988, 1175].forEach((f, i) => tone(ctx, f, t + i * 0.16, 0.4));
+}
+// Browsers only allow sound after the first tap, so prepare the audio on the first tap.
+document.addEventListener('pointerdown', () => getAudio(), { once: true });
+
+// The service worker cannot read localStorage, so keep the chosen sound in Cache Storage for it.
+function saveSoundForWorker() {
+  try {
+    if ('caches' in window) caches.open('ourchat-settings').then(cache => cache.put('./ourchat-sound', new Response(soundChoice))).catch(() => {});
+  } catch { /* ignore */ }
+}
+saveSoundForWorker();
+// Play for an incoming message; the app listener and the push signal can both fire, so only play once.
+let lastIncomingAt = 0;
+function playIncoming() {
+  if (Date.now() - lastIncomingAt < 2500) return;
+  lastIncomingAt = Date.now();
+  playSound();
+}
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('message', event => {
+    if (event.data && event.data.type === 'ourchat-push' && document.hidden) playIncoming();
+  });
+}
+
+const settingsDialog = document.createElement('dialog');
+settingsDialog.id = 'settingsDialog';
+settingsDialog.innerHTML = `<div style="padding:22px">
+  <div class="dialog-head"><div><p class="eyebrow">OURCHAT</p><h2>Settings</h2></div><button type="button" class="icon-btn" id="settingsClose" aria-label="Close">×</button></div>
+  <p class="eyebrow">MESSAGE SOUND</p>
+  <div class="theme-options" id="soundOptions"></div>
+  <p class="field-help">App open or in the background: the chosen sound plays. App closed (Android): the notification vibrates in a pattern that matches the sound (Off = silent).</p>
+  <p class="field-help">To change the real notification ringtone when the app is closed: Android Settings → Apps → OurChat (or Chrome) → Notifications → pick the channel → Sound.</p>
+  <div class="dialog-actions"><button type="button" class="secondary-btn" id="settingsLook">App look</button><button type="button" class="primary-btn" id="settingsDone">Done</button></div>
+</div>`;
+document.body.appendChild(settingsDialog);
+const soundOptions = settingsDialog.querySelector('#soundOptions');
+function drawSoundOptions() {
+  soundOptions.innerHTML = Object.entries(SOUNDS).map(([key, label]) =>
+    `<button type="button" class="theme-choice${key === soundChoice ? ' selected' : ''}" data-sound="${key}">${label}</button>`).join('');
+}
+soundOptions.addEventListener('click', event => {
+  const button = event.target.closest('[data-sound]');
+  if (!button) return;
+  soundChoice = button.dataset.sound;
+  try { localStorage.setItem('ourchat-sound', soundChoice); } catch { /* storage blocked */ }
+  saveSoundForWorker();
+  drawSoundOptions();
+  playSound(soundChoice);
+});
+settingsDialog.querySelector('#settingsClose').addEventListener('click', () => settingsDialog.close());
+settingsDialog.querySelector('#settingsDone').addEventListener('click', () => settingsDialog.close());
+settingsDialog.querySelector('#settingsLook').addEventListener('click', () => {
+  settingsDialog.close();
+  const look = $('#appearanceBtn');
+  if (look) look.click();
+});
+function openSettings() {
+  drawSoundOptions();
+  settingsDialog.showModal();
+}
+
 // ---------- start / stop ----------
 function startChat(email) {
   me = email;
@@ -482,15 +633,27 @@ function startChat(email) {
   overlay.classList.add('hidden');
   setupUi();
   messagesEl.innerHTML = '<div class="chat-empty">Loading messages…</div>';
+  firstSnapshot = true;
   const q = query(collection(db, 'messages'), orderBy('createdAt', 'desc'), limit(300));
   unsubscribe = onSnapshot(q, { includeMetadataChanges: true }, snapshot => {
     lastDocs = snapshot.docs.map(d => {
       const data = d.data({ serverTimestamps: 'estimate' });
       const created = data.createdAt && data.createdAt.toDate ? data.createdAt.toDate() : new Date();
-      return { id: d.id, text: String(data.text || ''), senderEmail: data.senderEmail, created, visibleAtMs: Number(data.visibleAtMs) || 0, expiresAtMs: Number(data.expiresAtMs) || 0, pending: d.metadata.hasPendingWrites };
+      return { id: d.id, text: String(data.text || ''), senderEmail: data.senderEmail, created, visibleAtMs: Number(data.visibleAtMs) || 0, expiresAtMs: Number(data.expiresAtMs) || 0, pending: d.metadata.hasPendingWrites,
+        replyTo: data.replyTo && typeof data.replyTo === 'object' ? { id: String(data.replyTo.id || ''), text: String(data.replyTo.text || ''), by: String(data.replyTo.by || '') } : null };
     });
     render();
     cleanupExpired();
+    if (!firstSnapshot) {
+      const nowMs = Date.now();
+      const incoming = snapshot.docChanges().some(change => {
+        if (change.type !== 'added' || change.doc.metadata.hasPendingWrites) return false;
+        const data = change.doc.data();
+        return data.senderEmail !== me && !(Number(data.visibleAtMs) > nowMs);
+      });
+      if (incoming) playIncoming();
+    }
+    firstSnapshot = false;
   }, error => {
     console.warn('Listen failed', error);
     messagesEl.innerHTML = `<div class="chat-empty">Could not load messages (${escapeHtml(error.code || 'error')}).</div>`;
@@ -501,7 +664,7 @@ function startChat(email) {
 function stopChat() {
   if (unsubscribe) { unsubscribe(); unsubscribe = null; }
   if (unsubscribeSession) { unsubscribeSession(); unsubscribeSession = null; }
-  me = null; other = null; lastDocs = []; failed.clear();
+  me = null; other = null; lastDocs = []; failed.clear(); replyTarget = null; updateReplyBar();
   messagesEl.innerHTML = '';
   overlay.classList.remove('hidden');
 }
