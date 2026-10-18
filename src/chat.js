@@ -19,6 +19,20 @@ let privacy = false;
 try { privacy = localStorage.getItem('ourchat-privacy') === '1'; } catch { /* storage blocked */ }
 const failed = new Map();
 const deleting = new Set();
+let unsubscribeSession = null;
+let kicking = false;
+
+// One id per browser/device (kept in localStorage). Same browser = same id, so refresh and extra tabs are fine.
+function getDeviceId() {
+  let id = '';
+  try { id = localStorage.getItem('ourchat-device') || ''; } catch { /* storage blocked */ }
+  if (!id) {
+    id = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36);
+    try { localStorage.setItem('ourchat-device', id); } catch { /* storage blocked */ }
+  }
+  return id;
+}
+const DEVICE_ID = getDeviceId();
 
 function toast(message) {
   const el = $('#toast');
@@ -432,6 +446,35 @@ messagesEl.addEventListener('click', event => {
   if (del) deleteMessage(del.dataset.id);
 });
 
+// ---------- single device login ----------
+async function kickOut() {
+  if (kicking) return;
+  kicking = true;
+  try {
+    // Remove this device's push address so the old device stops getting notifications.
+    const registration = await Promise.race([navigator.serviceWorker.ready, new Promise((_, reject) => setTimeout(reject, 3000))]);
+    const subscription = await registration.pushManager.getSubscription();
+    if (subscription && me) await setDoc(doc(db, 'pushEndpoints', me), { endpoints: arrayRemove(subscription.endpoint) }, { merge: true });
+  } catch { /* not important */ }
+  try { await signOut(auth); } catch { /* ignore */ }
+  loginError.textContent = 'You were signed out because this account was opened on another device.';
+  kicking = false;
+}
+function watchSession() {
+  if (unsubscribeSession) { unsubscribeSession(); unsubscribeSession = null; }
+  const email = me;
+  const ref = doc(db, 'sessions', email);
+  // Claim the session for this device first, then listen for another device taking it over.
+  setDoc(ref, { deviceId: DEVICE_ID, updatedAt: serverTimestamp() }).then(() => {
+    if (me !== email || unsubscribeSession) return;
+    unsubscribeSession = onSnapshot(ref, snapshot => {
+      if (snapshot.metadata.fromCache || snapshot.metadata.hasPendingWrites) return;
+      const data = snapshot.data();
+      if (data && data.deviceId && data.deviceId !== DEVICE_ID) kickOut();
+    }, error => console.warn('Session watch failed', error));
+  }).catch(error => console.warn('Session claim failed', error));
+}
+
 // ---------- start / stop ----------
 function startChat(email) {
   me = email;
@@ -453,9 +496,11 @@ function startChat(email) {
     messagesEl.innerHTML = `<div class="chat-empty">Could not load messages (${escapeHtml(error.code || 'error')}).</div>`;
   });
   autoPush();
+  watchSession();
 }
 function stopChat() {
   if (unsubscribe) { unsubscribe(); unsubscribe = null; }
+  if (unsubscribeSession) { unsubscribeSession(); unsubscribeSession = null; }
   me = null; other = null; lastDocs = []; failed.clear();
   messagesEl.innerHTML = '';
   overlay.classList.remove('hidden');
