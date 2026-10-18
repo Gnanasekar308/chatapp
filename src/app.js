@@ -232,6 +232,12 @@ input.addEventListener('keydown', event => {
     if (typeof composer.requestSubmit === 'function') composer.requestSubmit();
   }
 });
+// Dialog fix: Enter must press "Save" (the first button in the form is the x close button), and Esc must not close the box.
+dialog.addEventListener('keydown', event => {
+  if (event.key !== 'Enter' || event.isComposing) return;
+  if (event.target && event.target.tagName === 'INPUT') { event.preventDefault(); $('#dialogSave').click(); }
+});
+dialog.addEventListener('cancel', event => event.preventDefault());
 $('#actionForm').addEventListener('submit', event => {
   if (event.submitter?.value === 'cancel') return;
   event.preventDefault();
