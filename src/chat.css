@@ -8,3 +8,20 @@
 .chat-empty{margin:auto;color:#777d96;font-size:12px;text-align:center}
 .retry-btn{background:transparent;border:1px solid #6b3b45;color:var(--red);border-radius:8px;font-size:9px;padding:2px 7px}
 .rail .avatar.tiny{cursor:pointer}
+
+/* Fix: with many messages the list must scroll inside its box, not push the message box off screen */
+.app-shell{grid-template-rows:minmax(0,1fr)}
+.chat-panel{min-height:0;overflow:hidden}
+.messages{min-height:0}
+.sidebar,.details-panel{min-height:0}
+
+.tool-btn.active{color:var(--accent)}
+.del-btn{background:transparent;border:0;color:#858aa3;font-size:10px;padding:0 2px;opacity:.55}
+.del-btn:hover{opacity:1}
+.privacy-note{align-self:center;color:#a99aff;font-size:10px;border:1px dashed #40395d;border-radius:10px;padding:6px 10px;margin-bottom:4px;text-align:center}
+
+/* delete button, privacy, scheduled */
+.msg-del{background:transparent;border:0;font-size:10px;opacity:.5;padding:0 2px;line-height:1}
+.msg-del:hover{opacity:1}
+.tool-btn.on{color:var(--accent)}
+.privacy-note{align-self:center;max-width:90%;text-align:center;color:#a99aff;background:#28243a;border:1px solid #403958;border-radius:11px;padding:8px 12px;font-size:10px}

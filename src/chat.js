@@ -1,18 +1,22 @@
-// OurChat live chat: Firebase login + real-time messages for the two allowed people.
+// OurChat live chat: login, real-time messages, push, scheduled messages, delete, privacy mode.
 import { auth, db } from './firebase.js';
 import { signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
-import { collection, doc, setDoc, getDoc, deleteDoc, arrayUnion, arrayRemove, Timestamp, query, orderBy, limit, onSnapshot, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+import { collection, doc, setDoc, getDoc, getDocs, deleteDoc, writeBatch, arrayUnion, arrayRemove, Timestamp, query, orderBy, limit, onSnapshot, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
 const ALLOWED = ['gnanasekar308@gmail.com', 'venkathu0637@gmail.com'];
 const WORKER_URL = 'https://ourchat-push.gnanasekar308.workers.dev/';
 const $ = selector => document.querySelector(selector);
 const messagesEl = $('#messages');
+
 let me = null;
 let other = null;
 let unsubscribe = null;
 let lastDocs = [];
-let nextExpiry = 0;
+let nextWake = 0;
 let uiReady = false;
+let autoPushArmed = false;
+let privacy = false;
+try { privacy = localStorage.getItem('ourchat-privacy') === '1'; } catch { /* storage blocked */ }
 const failed = new Map();
 const deleting = new Set();
 
@@ -39,9 +43,15 @@ function durationLabel(ms) {
 function dayLabel(date) {
   const today = new Date();
   const yesterday = new Date(Date.now() - 86400000);
+  const tomorrow = new Date(Date.now() + 86400000);
   if (date.toDateString() === today.toDateString()) return 'TODAY';
   if (date.toDateString() === yesterday.toDateString()) return 'YESTERDAY';
+  if (date.toDateString() === tomorrow.toDateString()) return 'TOMORROW';
   return date.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' }).toUpperCase();
+}
+function toLocalInput(d) {
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
 // ---------- login screen ----------
@@ -81,7 +91,58 @@ $('#loginForm').addEventListener('submit', async event => {
   }
 });
 
+// ---------- schedule dialog (Timer button) ----------
+const scheduleDialog = document.createElement('dialog');
+scheduleDialog.id = 'scheduleDialog';
+scheduleDialog.innerHTML = `<form method="dialog" id="scheduleForm">
+  <div class="dialog-head"><div><p class="eyebrow">OURCHAT TOOLS</p><h2>Schedule message</h2></div><button class="icon-btn" value="cancel" aria-label="Close">×</button></div>
+  <label class="field-label" for="scheduleAt">Send on</label>
+  <input class="field-input" id="scheduleAt" type="datetime-local" required>
+  <p class="field-help" id="schedulePreview"></p>
+  <p class="field-help">The message appears for the other person at this time and they get a notification.</p>
+  <div class="dialog-actions"><button class="secondary-btn" value="cancel">Cancel</button><button class="primary-btn" id="scheduleSave" value="ok">Schedule</button></div>
+</form>`;
+document.body.appendChild(scheduleDialog);
+
+function openSchedule() {
+  if (!me) { toast('Please sign in first.'); return; }
+  const text = $('#messageInput').value.trim();
+  if (!text) { toast('Type a message first, then tap Timer.'); return; }
+  const input = $('#scheduleAt');
+  const suggested = new Date(Date.now() + 3600000);
+  suggested.setSeconds(0, 0);
+  input.min = toLocalInput(new Date(Date.now() + 60000));
+  input.value = toLocalInput(suggested);
+  $('#schedulePreview').textContent = `Message: “${text.length > 80 ? text.slice(0, 80) + '…' : text}”`;
+  scheduleDialog.showModal();
+}
+$('#scheduleSave').addEventListener('click', event => {
+  event.preventDefault();
+  const when = new Date($('#scheduleAt').value).getTime();
+  if (!Number.isFinite(when) || when < Date.now() + 30000) { toast('Pick a time in the future.'); return; }
+  const input = $('#messageInput');
+  const text = input.value.trim();
+  if (!text) { scheduleDialog.close('cancel'); return; }
+  scheduleDialog.close('ok');
+  input.value = '';
+  input.dispatchEvent(new Event('input'));
+  send(text, { vis: when });
+  toast(`Scheduled for ${new Date(when).toLocaleString([], { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}.`);
+});
+
 // ---------- one-time UI changes after login ----------
+function updatePrivacyButton() {
+  const button = $('#privacyBtn');
+  if (!button) return;
+  button.classList.toggle('on', privacy);
+  button.querySelector('span').textContent = privacy ? 'Privacy on' : 'Privacy';
+}
+function setPrivacy(on) {
+  privacy = on;
+  try { localStorage.setItem('ourchat-privacy', on ? '1' : '0'); } catch { /* storage blocked */ }
+  updatePrivacyButton();
+  render();
+}
 function setupUi() {
   const name = prettyName(other);
   const initial = name.charAt(0).toUpperCase();
@@ -99,27 +160,85 @@ function setupUi() {
   if (mine) {
     mine.textContent = prettyName(me).charAt(0).toUpperCase();
     mine.title = 'Sign out';
-    if (!uiReady) mine.addEventListener('click', () => { if (confirm('Sign out of OurChat?')) signOut(auth); });
   }
+  if (uiReady) return;
   uiReady = true;
+  if (mine) mine.addEventListener('click', () => { if (confirm('Sign out of OurChat?')) signOut(auth); });
+
+  // Timer button now schedules a message (replace the old handler by cloning the button).
+  const oldTimer = $('#timerBtn');
+  if (oldTimer) {
+    const timer = oldTimer.cloneNode(true);
+    oldTimer.replaceWith(timer);
+    timer.addEventListener('click', openSchedule);
+  }
+  // Privacy button next to Reminder.
+  const reminderBtn = $('#reminderBtn');
+  if (reminderBtn && !$('#privacyBtn')) {
+    const button = document.createElement('button');
+    button.id = 'privacyBtn';
+    button.type = 'button';
+    button.className = 'tool-btn';
+    button.innerHTML = '◈ <span>Privacy</span>';
+    button.addEventListener('click', () => setPrivacy(!privacy));
+    reminderBtn.insertAdjacentElement('afterend', button);
+  }
+  updatePrivacyButton();
+  // "Clear all messages" in the details panel.
+  const appearance = $('#appearanceBtn');
+  if (appearance && !$('#clearAllBtn')) {
+    const button = document.createElement('button');
+    button.id = 'clearAllBtn';
+    button.type = 'button';
+    button.className = 'detail-action';
+    button.innerHTML = '🗑 <span>Clear all messages</span><b>›</b>';
+    button.addEventListener('click', clearAll);
+    appearance.insertAdjacentElement('afterend', button);
+  }
 }
 
 // ---------- rendering ----------
 function render() {
   const now = Date.now();
   const stick = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 90;
-  const items = lastDocs.filter(m => !(m.expiresAtMs && m.expiresAtMs <= now));
-  for (const [id, f] of failed) {
-    if (!lastDocs.some(m => m.id === id)) items.push({ id, text: f.text, senderEmail: me, date: new Date(f.at), expiresAtMs: f.exp, failed: true });
+  let items = [];
+  nextWake = 0;
+  const wake = t => { if (t > now && (!nextWake || t < nextWake)) nextWake = t; };
+  for (const m of lastDocs) {
+    wake(m.expiresAtMs);
+    wake(m.visibleAtMs);
+    if (m.expiresAtMs && m.expiresAtMs <= now) continue;
+    const mineMsg = m.senderEmail === me;
+    const scheduled = m.visibleAtMs > now;
+    if (scheduled && !mineMsg) continue; // the other person's scheduled message stays hidden until its time
+    items.push({ ...m, mine: mineMsg, scheduled, at: new Date(m.visibleAtMs || m.created.getTime()) });
   }
-  nextExpiry = items.reduce((min, m) => (m.expiresAtMs && (!min || m.expiresAtMs < min) ? m.expiresAtMs : min), 0);
+  for (const [id, f] of failed) {
+    if (!lastDocs.some(m => m.id === id)) items.push({ id, text: f.text, senderEmail: me, mine: true, scheduled: false, failed: true, expiresAtMs: f.exp, at: new Date(f.vis || f.at) });
+  }
+  items.sort((a, b) => a.at - b.at);
+  if (privacy) {
+    const delivered = items.filter(m => !m.scheduled);
+    const lastMine = [...delivered].reverse().find(m => m.mine);
+    const lastOther = [...delivered].reverse().find(m => !m.mine);
+    items = [lastMine, lastOther].filter(Boolean).sort((a, b) => a.at - b.at);
+  }
   messagesEl.innerHTML = '';
+  if (privacy) {
+    const note = document.createElement('div');
+    note.className = 'privacy-note';
+    note.textContent = '◈ Privacy on · only your last sent and last received message are shown. Nothing is deleted.';
+    messagesEl.appendChild(note);
+  }
   if (!items.length) {
-    messagesEl.innerHTML = '<div class="chat-empty">No messages yet. Say hi 👋</div>';
+    const empty = document.createElement('div');
+    empty.className = 'chat-empty';
+    empty.textContent = 'No messages yet. Say hi 👋';
+    messagesEl.appendChild(empty);
   }
   let lastDay = '';
   for (const m of items) {
-    const label = dayLabel(m.date);
+    const label = dayLabel(m.at);
     if (label !== lastDay) {
       lastDay = label;
       const divider = document.createElement('div');
@@ -127,27 +246,30 @@ function render() {
       divider.innerHTML = `<span>${escapeHtml(label)}</span>`;
       messagesEl.appendChild(divider);
     }
-    const mineMsg = m.senderEmail === me;
     const row = document.createElement('div');
-    row.className = `message-row ${mineMsg ? 'outgoing' : 'incoming'}`;
-    const time = m.date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-    const expiry = m.expiresAtMs ? `<span class="expiry">⌛ ${durationLabel(m.expiresAtMs - m.date.getTime())}</span>` : '';
+    row.className = `message-row ${m.mine ? 'outgoing' : 'incoming'}`;
+    const time = m.scheduled
+      ? 'Scheduled · ' + m.at.toLocaleString([], { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })
+      : m.at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    const expiry = m.expiresAtMs ? `<span class="expiry">⌛ ${durationLabel(m.expiresAtMs - m.at.getTime())}</span>` : '';
     let status = '';
-    if (mineMsg) {
+    if (m.mine) {
       if (m.failed) status = `<span class="status failed">● Not sent</span><button type="button" class="retry-btn" data-id="${escapeHtml(m.id)}">Retry</button>`;
+      else if (m.scheduled) status = '<span class="status pending">● Scheduled</span>';
       else if (m.pending) status = '<span class="status pending">● Sending</span>';
       else status = '<span class="status sent">● Sent</span>';
     }
-    row.innerHTML = `<div class="bubble"><p>${escapeHtml(m.text)}</p><div class="message-meta"><time>${escapeHtml(time)}</time>${status}${expiry}</div></div>`;
+    const del = `<button type="button" class="msg-del" data-id="${escapeHtml(m.id)}" title="Delete" aria-label="Delete message">🗑</button>`;
+    row.innerHTML = `<div class="bubble${m.scheduled ? ' scheduled' : ''}"><p>${escapeHtml(m.text)}</p><div class="message-meta"><time>${escapeHtml(time)}</time>${status}${expiry}${del}</div></div>`;
     messagesEl.appendChild(row);
   }
   const preview = $('#convPreview');
-  const last = items[items.length - 1];
-  if (preview) preview.textContent = last ? `${last.senderEmail === me ? 'You: ' : ''}${last.text}` : 'No messages yet';
+  const last = [...items].reverse().find(m => !m.scheduled) || items[items.length - 1];
+  if (preview) preview.textContent = privacy ? '◈ Privacy on' : (last ? `${last.mine ? 'You: ' : ''}${last.text}` : 'No messages yet');
   if (stick) messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
-// ---------- delete expired messages from the database ----------
+// ---------- delete ----------
 function cleanupExpired() {
   const now = Date.now();
   for (const m of lastDocs) {
@@ -157,6 +279,36 @@ function cleanupExpired() {
       console.warn('Delete expired failed', error);
       deleting.delete(m.id);
     });
+  }
+}
+async function deleteMessage(id) {
+  if (failed.has(id)) { failed.delete(id); render(); return; }
+  if (!confirm('Delete this message for both of you?')) return;
+  try {
+    await deleteDoc(doc(db, 'messages', id));
+  } catch (error) {
+    toast(`Could not delete (${error && error.code ? error.code : 'error'}).`);
+  }
+}
+async function clearAll() {
+  if (!me) return;
+  if (!confirm('Delete ALL messages for both of you? This cannot be undone.')) return;
+  try {
+    failed.clear();
+    const snapshot = await getDocs(collection(db, 'messages'));
+    let batch = writeBatch(db);
+    let inBatch = 0;
+    let total = 0;
+    for (const d of snapshot.docs) {
+      batch.delete(d.ref);
+      inBatch += 1;
+      total += 1;
+      if (inBatch === 400) { await batch.commit(); batch = writeBatch(db); inBatch = 0; }
+    }
+    if (inBatch) await batch.commit();
+    toast(total ? 'All messages deleted.' : 'No messages to delete.');
+  } catch (error) {
+    toast(`Could not clear messages (${error && error.code ? error.code : 'error'}).`);
   }
 }
 
@@ -178,14 +330,21 @@ function sameKey(subscription, keyBytes) {
   const a = new Uint8Array(existing);
   return a.length === keyBytes.length && a.every((v, i) => v === keyBytes[i]);
 }
-async function enablePush() {
-  if (!me) { toast('Please sign in first.'); return; }
+async function ensurePush(interactive) {
+  if (!me) return false;
   if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
-    toast('Push is not supported here. On iPhone, add the app to the Home Screen first.');
-    return;
+    if (interactive) toast('Push is not supported here. On iPhone, add the app to the Home Screen first.');
+    return false;
   }
-  const permission = await Notification.requestPermission();
-  if (permission !== 'granted') { toast('Notification permission was not granted.'); return; }
+  if (Notification.permission === 'denied') {
+    if (interactive) toast('Notifications are blocked. Allow them from the lock icon next to the address bar.');
+    return false;
+  }
+  if (Notification.permission !== 'granted') {
+    if (!interactive) return false;
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') { toast('Notification permission was not granted.'); return false; }
+  }
   try {
     const registration = await navigator.serviceWorker.ready;
     const keyBytes = urlBase64ToUint8Array(await getVapidKey());
@@ -198,20 +357,41 @@ async function enablePush() {
       subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes });
     }
     await setDoc(doc(db, 'pushEndpoints', me), { endpoints: arrayUnion(subscription.endpoint), updatedAt: serverTimestamp() }, { merge: true });
-    toast('Notifications are on for this device.');
+    const button = $('#notifyBtn');
+    if (button) button.classList.add('hidden');
+    if (interactive) toast('Notifications are on for this device.');
+    return true;
   } catch (error) {
     console.warn('Enable push failed', error);
-    toast(`Could not turn on notifications (${error && error.name ? error.name : 'error'}).`);
+    if (interactive) toast(`Could not turn on notifications (${error && error.name ? error.name : 'error'}).`);
+    return false;
   }
 }
-window.ourchatEnablePush = enablePush;
+window.ourchatEnablePush = () => ensurePush(true);
 
-async function notifyOther() {
+// Automatic: silent refresh if already allowed; otherwise ask on the first tap/keypress after login.
+function autoPush() {
+  ensurePush(false);
+  if (autoPushArmed || !('Notification' in window) || Notification.permission !== 'default') return;
+  autoPushArmed = true;
+  const ask = () => {
+    document.removeEventListener('pointerdown', ask);
+    document.removeEventListener('keydown', ask);
+    autoPushArmed = false;
+    ensurePush(true);
+  };
+  document.addEventListener('pointerdown', ask);
+  document.addEventListener('keydown', ask);
+}
+
+async function notifyOther(at) {
   try {
     const snapshot = await getDoc(doc(db, 'pushEndpoints', other));
     const endpoints = snapshot.exists() ? (snapshot.data().endpoints || []) : [];
     if (!endpoints.length) return;
-    const response = await fetch(WORKER_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ endpoints }) });
+    const payload = { endpoints };
+    if (at) payload.at = at;
+    const response = await fetch(WORKER_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
     const data = await response.json();
     const dead = (data.result || []).filter(r => r.status === 404 || r.status === 410).map(r => r.endpoint);
     if (dead.length) await setDoc(doc(db, 'pushEndpoints', other), { endpoints: arrayRemove(...dead) }, { merge: true });
@@ -221,27 +401,35 @@ async function notifyOther() {
 }
 
 // ---------- sending ----------
-async function send(text, existing) {
+async function send(text, opts = {}) {
   if (!me) { toast('Please sign in first.'); return; }
-  const id = existing ? existing.id : doc(collection(db, 'messages')).id;
-  const expiresAtMs = existing ? existing.exp : Date.now() + (window.ourchatGetExpiryMs ? window.ourchatGetExpiryMs() : 86400000);
+  const id = opts.id || doc(collection(db, 'messages')).id;
+  const vis = opts.vis || 0;
+  const expiryMs = window.ourchatGetExpiryMs ? window.ourchatGetExpiryMs() : 86400000;
+  const expiresAtMs = opts.exp || (vis || Date.now()) + expiryMs;
   failed.delete(id);
+  const payload = { text, senderEmail: me, createdAt: serverTimestamp(), expiresAtMs, expiresAt: Timestamp.fromMillis(expiresAtMs) };
+  if (vis) payload.visibleAtMs = vis;
   try {
-    await setDoc(doc(db, 'messages', id), { text, senderEmail: me, createdAt: serverTimestamp(), expiresAtMs, expiresAt: Timestamp.fromMillis(expiresAtMs) });
-    notifyOther();
+    await setDoc(doc(db, 'messages', id), payload);
+    notifyOther(vis);
   } catch (error) {
     console.warn('Send failed', error);
-    failed.set(id, { text, exp: expiresAtMs, at: Date.now() });
+    failed.set(id, { text, exp: expiresAtMs, vis, at: Date.now() });
     render();
     toast(error && error.code === 'permission-denied' ? 'Not allowed by Firestore rules.' : 'Message not sent. Tap Retry.');
   }
 }
 window.ourchatSend = text => send(text);
 messagesEl.addEventListener('click', event => {
-  const button = event.target.closest('.retry-btn');
-  if (!button) return;
-  const f = failed.get(button.dataset.id);
-  if (f) send(f.text, { id: button.dataset.id, exp: f.exp });
+  const retry = event.target.closest('.retry-btn');
+  if (retry) {
+    const f = failed.get(retry.dataset.id);
+    if (f) send(f.text, { id: retry.dataset.id, exp: f.exp, vis: f.vis });
+    return;
+  }
+  const del = event.target.closest('.msg-del');
+  if (del) deleteMessage(del.dataset.id);
 });
 
 // ---------- start / stop ----------
@@ -256,14 +444,15 @@ function startChat(email) {
     lastDocs = snapshot.docs.map(d => {
       const data = d.data({ serverTimestamps: 'estimate' });
       const created = data.createdAt && data.createdAt.toDate ? data.createdAt.toDate() : new Date();
-      return { id: d.id, text: String(data.text || ''), senderEmail: data.senderEmail, date: created, expiresAtMs: Number(data.expiresAtMs) || 0, pending: d.metadata.hasPendingWrites };
-    }).reverse();
+      return { id: d.id, text: String(data.text || ''), senderEmail: data.senderEmail, created, visibleAtMs: Number(data.visibleAtMs) || 0, expiresAtMs: Number(data.expiresAtMs) || 0, pending: d.metadata.hasPendingWrites };
+    });
     render();
     cleanupExpired();
   }, error => {
     console.warn('Listen failed', error);
     messagesEl.innerHTML = `<div class="chat-empty">Could not load messages (${escapeHtml(error.code || 'error')}).</div>`;
   });
+  autoPush();
 }
 function stopChat() {
   if (unsubscribe) { unsubscribe(); unsubscribe = null; }
@@ -283,4 +472,4 @@ onAuthStateChanged(auth, user => {
   startChat(email);
 });
 
-setInterval(() => { if (nextExpiry && nextExpiry <= Date.now()) render(); cleanupExpired(); }, 10000);
+setInterval(() => { if (me) { if (nextWake && nextWake <= Date.now()) render(); cleanupExpired(); } }, 10000);
