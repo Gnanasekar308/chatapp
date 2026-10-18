@@ -1,9 +1,10 @@
 // OurChat live chat: Firebase login + real-time messages for the two allowed people.
 import { auth, db } from './firebase.js';
 import { signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
-import { collection, doc, setDoc, deleteDoc, Timestamp, query, orderBy, limit, onSnapshot, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+import { collection, doc, setDoc, getDoc, deleteDoc, arrayUnion, arrayRemove, Timestamp, query, orderBy, limit, onSnapshot, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
 const ALLOWED = ['gnanasekar308@gmail.com', 'venkathu0637@gmail.com'];
+const WORKER_URL = 'https://ourchat-push.gnanasekar308.workers.dev/';
 const $ = selector => document.querySelector(selector);
 const messagesEl = $('#messages');
 let me = null;
@@ -159,6 +160,66 @@ function cleanupExpired() {
   }
 }
 
+// ---------- push notifications ----------
+function urlBase64ToUint8Array(value) {
+  const padded = value + '='.repeat((4 - (value.length % 4)) % 4);
+  const raw = atob(padded.replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(raw, c => c.charCodeAt(0));
+}
+async function getVapidKey() {
+  const response = await fetch(WORKER_URL);
+  const data = await response.json();
+  if (!data.key) throw new Error('no-key');
+  return data.key;
+}
+function sameKey(subscription, keyBytes) {
+  const existing = subscription.options && subscription.options.applicationServerKey;
+  if (!existing) return false;
+  const a = new Uint8Array(existing);
+  return a.length === keyBytes.length && a.every((v, i) => v === keyBytes[i]);
+}
+async function enablePush() {
+  if (!me) { toast('Please sign in first.'); return; }
+  if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+    toast('Push is not supported here. On iPhone, add the app to the Home Screen first.');
+    return;
+  }
+  const permission = await Notification.requestPermission();
+  if (permission !== 'granted') { toast('Notification permission was not granted.'); return; }
+  try {
+    const registration = await navigator.serviceWorker.ready;
+    const keyBytes = urlBase64ToUint8Array(await getVapidKey());
+    let subscription = await registration.pushManager.getSubscription();
+    if (subscription && !sameKey(subscription, keyBytes)) {
+      await subscription.unsubscribe();
+      subscription = null;
+    }
+    if (!subscription) {
+      subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes });
+    }
+    await setDoc(doc(db, 'pushEndpoints', me), { endpoints: arrayUnion(subscription.endpoint), updatedAt: serverTimestamp() }, { merge: true });
+    toast('Notifications are on for this device.');
+  } catch (error) {
+    console.warn('Enable push failed', error);
+    toast(`Could not turn on notifications (${error && error.name ? error.name : 'error'}).`);
+  }
+}
+window.ourchatEnablePush = enablePush;
+
+async function notifyOther() {
+  try {
+    const snapshot = await getDoc(doc(db, 'pushEndpoints', other));
+    const endpoints = snapshot.exists() ? (snapshot.data().endpoints || []) : [];
+    if (!endpoints.length) return;
+    const response = await fetch(WORKER_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ endpoints }) });
+    const data = await response.json();
+    const dead = (data.result || []).filter(r => r.status === 404 || r.status === 410).map(r => r.endpoint);
+    if (dead.length) await setDoc(doc(db, 'pushEndpoints', other), { endpoints: arrayRemove(...dead) }, { merge: true });
+  } catch (error) {
+    console.warn('Push notify failed', error);
+  }
+}
+
 // ---------- sending ----------
 async function send(text, existing) {
   if (!me) { toast('Please sign in first.'); return; }
@@ -167,6 +228,7 @@ async function send(text, existing) {
   failed.delete(id);
   try {
     await setDoc(doc(db, 'messages', id), { text, senderEmail: me, createdAt: serverTimestamp(), expiresAtMs, expiresAt: Timestamp.fromMillis(expiresAtMs) });
+    notifyOther();
   } catch (error) {
     console.warn('Send failed', error);
     failed.set(id, { text, exp: expiresAtMs, at: Date.now() });

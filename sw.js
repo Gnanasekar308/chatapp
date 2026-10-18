@@ -1,5 +1,5 @@
 'use strict';
-const CACHE = 'ourchat-shell-v6';
+const CACHE = 'ourchat-shell-v7';
 const ASSETS = [
   './', './index.html', './src/styles.css', './src/chat.css', './src/app.js', './src/chat.js', './src/firebase.js',
   './manifest.webmanifest', './assets/icon-192.png', './assets/icon-512.png'
@@ -39,5 +39,24 @@ self.addEventListener('fetch', event => {
       }
       return Response.error();
     }
+  })());
+});
+
+// Push: the Worker sends an empty signal, so we show a generic notification (no message text leaves the app).
+self.addEventListener('push', event => {
+  event.waitUntil(self.registration.showNotification('OurChat', {
+    body: 'You have a new message',
+    icon: './assets/icon-192.png',
+    badge: './assets/icon-192.png',
+    tag: 'ourchat-message',
+    renotify: true
+  }));
+});
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  event.waitUntil((async () => {
+    const list = await clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const client of list) { if ('focus' in client) return client.focus(); }
+    return clients.openWindow('./');
   })());
 });

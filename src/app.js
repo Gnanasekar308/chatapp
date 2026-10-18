@@ -204,6 +204,7 @@ $('#remindersNav').addEventListener('click', () => {
   else toast(`${reminders.length} upcoming reminder${reminders.length === 1 ? '' : 's'}: ${reminders.slice(0, 2).map(item => item.text).join('; ')}`);
 });
 $('#notifyBtn').addEventListener('click', async () => {
+  if (typeof window.ourchatEnablePush === 'function') { await window.ourchatEnablePush(); return; }
   if (!('Notification' in window)) { toast('This browser does not support notifications.'); return; }
   try {
     const permission = await Notification.requestPermission();
