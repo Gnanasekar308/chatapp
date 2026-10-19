@@ -1,7 +1,7 @@
 'use strict';
-const CACHE = 'ourchat-shell-v7';
+const CACHE = 'ourchat-shell-v8';
 const ASSETS = [
-  './', './index.html', './src/styles.css', './src/chat.css', './src/app.js', './src/chat.js', './src/firebase.js',
+  './', './index.html', './src/styles.css', './src/chat.css', './src/app.js', './src/chat.js', './src/extras.js', './src/firebase.js',
   './manifest.webmanifest', './assets/icon-192.png', './assets/icon-512.png'
 ];
 self.addEventListener('install', event => {
@@ -42,15 +42,60 @@ self.addEventListener('fetch', event => {
   })());
 });
 
-// Push: the Worker sends an empty signal, so we show a generic notification (no message text leaves the app).
+// Reminders are stored on the device in IndexedDB (written by src/extras.js).
+function openReminderDb() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open('ourchat', 1);
+    request.onupgradeneeded = () => { request.result.createObjectStore('reminders', { keyPath: 'id' }); };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+async function readReminders() {
+  const database = await openReminderDb();
+  return new Promise((resolve, reject) => {
+    const query = database.transaction('reminders').objectStore('reminders').getAll();
+    query.onsuccess = () => resolve(query.result);
+    query.onerror = () => reject(query.error);
+  });
+}
+async function markReminderDone(reminder) {
+  const database = await openReminderDb();
+  return new Promise((resolve, reject) => {
+    const tx = database.transaction('reminders', 'readwrite');
+    tx.objectStore('reminders').put({ ...reminder, done: true });
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+// Push: the Worker sends an empty signal. If a reminder on this device is due, show it; otherwise show a generic
+// "new message" notification (no message text leaves the app).
 self.addEventListener('push', event => {
-  event.waitUntil(self.registration.showNotification('OurChat', {
-    body: 'You have a new message',
-    icon: './assets/icon-192.png',
-    badge: './assets/icon-192.png',
-    tag: 'ourchat-message',
-    renotify: true
-  }));
+  event.waitUntil((async () => {
+    let due = [];
+    try { due = (await readReminders()).filter(r => !r.done && r.at <= Date.now() + 30000); } catch (error) { due = []; }
+    if (due.length) {
+      for (const reminder of due) {
+        await self.registration.showNotification('⏰ OurChat reminder', {
+          body: reminder.text,
+          icon: './assets/icon-192.png',
+          badge: './assets/icon-192.png',
+          tag: 'reminder-' + reminder.id,
+          requireInteraction: true
+        });
+        try { await markReminderDone(reminder); } catch (error) { /* ignore */ }
+      }
+      return;
+    }
+    await self.registration.showNotification('OurChat', {
+      body: 'You have a new message',
+      icon: './assets/icon-192.png',
+      badge: './assets/icon-192.png',
+      tag: 'ourchat-message',
+      renotify: true
+    });
+  })());
 });
 self.addEventListener('notificationclick', event => {
   event.notification.close();
