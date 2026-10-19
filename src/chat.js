@@ -8,33 +8,64 @@ const WORKER_URL = 'https://ourchat-push.gnanasekar308.workers.dev/';
 const $ = selector => document.querySelector(selector);
 const messagesEl = $('#messages');
 
+// ---------- app-only mode: the chat opens only in the installed app (like WhatsApp), not in a normal browser tab ----------
+const IS_APP =
+  window.matchMedia('(display-mode: standalone)').matches ||
+  window.matchMedia('(display-mode: fullscreen)').matches ||
+  window.matchMedia('(display-mode: window-controls-overlay)').matches ||
+  window.navigator.standalone === true ||
+  document.referrer.startsWith('android-app://') ||
+  new URLSearchParams(location.search).get('browser') === '1'; // owner's debug switch
+
+if (!IS_APP) {
+  const gate = document.createElement('div');
+  gate.id = 'appGate';
+  gate.innerHTML = `<div class="gate-card">
+    <p class="eyebrow">OURCHAT</p>
+    <h2>Open the OurChat app</h2>
+    <p class="login-sub">Your chat is private and opens only in the installed app, not in the browser.</p>
+    <button class="primary-btn" id="gateInstall" type="button" hidden>Install OurChat</button>
+    <p class="gate-done" id="gateDone" hidden>Installed. Close this tab and open <b>OurChat</b> from your Start menu or home screen.</p>
+    <div class="gate-steps" id="gateSteps">
+      <p><b>PC (Chrome):</b> tap the Install icon at the right end of the address bar, then Install. Later, open OurChat from the Start menu.</p>
+      <p><b>Android:</b> Chrome menu ⋮ → Install app. Then open OurChat from the home screen.</p>
+      <p><b>iPhone:</b> in Safari tap Share → Add to Home Screen. Then open OurChat from the home screen.</p>
+      <p>Already installed? Open it from the Start menu or home screen instead of this tab.</p>
+    </div>
+  </div>`;
+  document.body.appendChild(gate);
+  let installPrompt = null;
+  window.addEventListener('beforeinstallprompt', event => {
+    event.preventDefault();
+    installPrompt = event;
+    gate.querySelector('#gateInstall').hidden = false;
+  });
+  gate.querySelector('#gateInstall').addEventListener('click', async () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    await installPrompt.userChoice.catch(() => {});
+    installPrompt = null;
+    gate.querySelector('#gateInstall').hidden = true;
+  });
+  window.addEventListener('appinstalled', () => {
+    gate.querySelector('#gateInstall').hidden = true;
+    gate.querySelector('#gateSteps').hidden = true;
+    gate.querySelector('#gateDone').hidden = false;
+  });
+}
+
 let me = null;
 let other = null;
 let unsubscribe = null;
 let lastDocs = [];
 let nextWake = 0;
+let forceBottomUntil = 0; // keep the newest message in view right after the app opens or comes back to the front
 let uiReady = false;
 let autoPushArmed = false;
 let privacy = false;
 try { privacy = localStorage.getItem('ourchat-privacy') === '1'; } catch { /* storage blocked */ }
 const failed = new Map();
 const deleting = new Set();
-let unsubscribeSession = null;
-let kicking = false;
-let firstSnapshot = true;
-let replyTarget = null;
-
-// One id per browser/device (kept in localStorage). Same browser = same id, so refresh and extra tabs are fine.
-function getDeviceId() {
-  let id = '';
-  try { id = localStorage.getItem('ourchat-device') || ''; } catch { /* storage blocked */ }
-  if (!id) {
-    id = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36);
-    try { localStorage.setItem('ourchat-device', id); } catch { /* storage blocked */ }
-  }
-  return id;
-}
-const DEVICE_ID = getDeviceId();
 
 function toast(message) {
   const el = $('#toast');
@@ -55,6 +86,16 @@ function durationLabel(ms) {
   const hours = Math.round(ms / 3600000);
   if (hours >= 24 && hours % 24 === 0) return hours === 24 ? '24h' : `${hours / 24}d`;
   return `${Math.max(hours, 1)}h`;
+}
+// Every night at 12 AM India time (IST, UTC+5:30) the chat starts fresh.
+const IST_OFFSET = 19800000;
+const DAY_MS = 86400000;
+function nextMidnightIST(t) {
+  return (Math.floor((t + IST_OFFSET) / DAY_MS) + 1) * DAY_MS - IST_OFFSET;
+}
+function expiryLabel(m, startMs) {
+  if ((m.expiresAtMs + IST_OFFSET) % DAY_MS === 0) return '12 AM';
+  return durationLabel(m.expiresAtMs - startMs);
 }
 function dayLabel(date) {
   const today = new Date();
@@ -170,6 +211,15 @@ function setupUi() {
   $('#conversationList').innerHTML = `<button class="conversation active"><div class="avatar pink">${escapeHtml(initial)}</div><div class="conversation-copy"><div class="conversation-title"><strong>${escapeHtml(name)}</strong><time></time></div><p id="convPreview">No messages yet</p></div></button>`;
   const filterCount = document.querySelector('.filter.active span');
   if (filterCount) filterCount.textContent = '1';
+  const banner = document.querySelector('.security-banner');
+  if (banner) {
+    const textNode = [...banner.childNodes].find(n => n.nodeType === 3 && n.nodeValue.trim().length > 5);
+    if (textNode) textNode.nodeValue = ' Messages are deleted every night at 12 AM ';
+  }
+  const composerNote = document.querySelector('.composer-note');
+  if (composerNote) composerNote.textContent = 'Chat clears every night at 12 AM';
+  const pill = document.querySelector('.profile-pill');
+  if (pill) pill.textContent = '✦ Clears at 12 AM';
   const note = document.querySelector('.demo-note');
   if (note) note.textContent = 'Live chat · Messages sync between you two';
   const mine = document.querySelector('.rail .avatar.tiny');
@@ -187,13 +237,6 @@ function setupUi() {
     const timer = oldTimer.cloneNode(true);
     oldTimer.replaceWith(timer);
     timer.addEventListener('click', openSchedule);
-  }
-  // Settings (gear) button opens our Settings box.
-  const oldSettings = $('#settingsNav');
-  if (oldSettings) {
-    const gear = oldSettings.cloneNode(true);
-    oldSettings.replaceWith(gear);
-    gear.addEventListener('click', openSettings);
   }
   // Privacy button next to Reminder.
   const reminderBtn = $('#reminderBtn');
@@ -237,7 +280,7 @@ function render() {
     items.push({ ...m, mine: mineMsg, scheduled, at: new Date(m.visibleAtMs || m.created.getTime()) });
   }
   for (const [id, f] of failed) {
-    if (!lastDocs.some(m => m.id === id)) items.push({ id, text: f.text, senderEmail: me, mine: true, scheduled: false, failed: true, expiresAtMs: f.exp, replyTo: f.reply || null, at: new Date(f.vis || f.at) });
+    if (!lastDocs.some(m => m.id === id)) items.push({ id, text: f.text, senderEmail: me, mine: true, scheduled: false, failed: true, expiresAtMs: f.exp, at: new Date(f.vis || f.at) });
   }
   items.sort((a, b) => a.at - b.at);
   if (privacy) {
@@ -274,7 +317,7 @@ function render() {
     const time = m.scheduled
       ? 'Scheduled · ' + m.at.toLocaleString([], { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })
       : m.at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-    const expiry = m.expiresAtMs ? `<span class="expiry">⌛ ${durationLabel(m.expiresAtMs - m.at.getTime())}</span>` : '';
+    const expiry = m.expiresAtMs ? `<span class="expiry">⌛ ${expiryLabel(m, m.at.getTime())}</span>` : '';
     let status = '';
     if (m.mine) {
       if (m.failed) status = `<span class="status failed">● Not sent</span><button type="button" class="retry-btn" data-id="${escapeHtml(m.id)}">Retry</button>`;
@@ -283,18 +326,13 @@ function render() {
       else status = '<span class="status sent">● Sent</span>';
     }
     const del = `<button type="button" class="msg-del" data-id="${escapeHtml(m.id)}" title="Delete" aria-label="Delete message">🗑</button>`;
-    row.dataset.rowId = m.id;
-    const quote = m.replyTo && m.replyTo.text
-      ? `<div class="reply-quote" data-id="${escapeHtml(m.replyTo.id)}"><b>${escapeHtml(m.replyTo.by === me ? 'You' : prettyName(m.replyTo.by || 'them'))}</b><span>${escapeHtml(m.replyTo.text)}</span></div>`
-      : '';
-    const replyBtn = m.failed ? '' : `<button type="button" class="msg-reply" data-id="${escapeHtml(m.id)}" title="Reply" aria-label="Reply to message">↩</button>`;
-    row.innerHTML = `<div class="bubble${m.scheduled ? ' scheduled' : ''}">${quote}<p>${escapeHtml(m.text)}</p><div class="message-meta"><time>${escapeHtml(time)}</time>${status}${expiry}${replyBtn}${del}</div></div>`;
+    row.innerHTML = `<div class="bubble${m.scheduled ? ' scheduled' : ''}"><p>${escapeHtml(m.text)}</p><div class="message-meta"><time>${escapeHtml(time)}</time>${status}${expiry}${del}</div></div>`;
     messagesEl.appendChild(row);
   }
   const preview = $('#convPreview');
   const last = [...items].reverse().find(m => !m.scheduled) || items[items.length - 1];
   if (preview) preview.textContent = privacy ? '◈ Privacy on' : (last ? `${last.mine ? 'You: ' : ''}${last.text}` : 'No messages yet');
-  if (stick) messagesEl.scrollTop = messagesEl.scrollHeight;
+  if (stick || Date.now() < forceBottomUntil) messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
 // ---------- delete ----------
@@ -428,56 +466,23 @@ async function notifyOther(at) {
   }
 }
 
-// ---------- reply ----------
-const replyBar = document.createElement('div');
-replyBar.className = 'reply-bar hidden';
-const composerForm = $('#composer');
-if (composerForm) composerForm.parentNode.insertBefore(replyBar, composerForm);
-function updateReplyBar() {
-  if (!replyTarget) { replyBar.classList.add('hidden'); replyBar.innerHTML = ''; return; }
-  const who = replyTarget.by === me ? 'yourself' : prettyName(replyTarget.by || 'them');
-  replyBar.innerHTML = `<div><b>Replying to ${escapeHtml(who)}</b><span>${escapeHtml(replyTarget.text)}</span></div><button type="button" id="replyCancel" aria-label="Cancel reply">×</button>`;
-  replyBar.classList.remove('hidden');
-}
-replyBar.addEventListener('click', event => {
-  if (event.target.closest('#replyCancel')) { replyTarget = null; updateReplyBar(); }
-});
-function startReply(id) {
-  const m = lastDocs.find(x => x.id === id);
-  if (!m) return;
-  replyTarget = { id: m.id, text: m.text.length > 120 ? m.text.slice(0, 120) + '…' : m.text, by: m.senderEmail };
-  updateReplyBar();
-  const input = $('#messageInput');
-  if (input) input.focus();
-}
-function jumpToMessage(id) {
-  if (!id) return;
-  const row = [...messagesEl.querySelectorAll('.message-row')].find(el => el.dataset.rowId === id);
-  if (!row) { toast('That message is no longer there.'); return; }
-  row.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  row.classList.add('flash');
-  setTimeout(() => row.classList.remove('flash'), 1300);
-}
-
 // ---------- sending ----------
 async function send(text, opts = {}) {
   if (!me) { toast('Please sign in first.'); return; }
   const id = opts.id || doc(collection(db, 'messages')).id;
   const vis = opts.vis || 0;
   const expiryMs = window.ourchatGetExpiryMs ? window.ourchatGetExpiryMs() : 86400000;
-  const expiresAtMs = opts.exp || (vis || Date.now()) + expiryMs;
+  const base = vis || Date.now();
+  const expiresAtMs = opts.exp || Math.min(base + expiryMs, nextMidnightIST(base));
   failed.delete(id);
-  let reply = opts.reply;
-  if (reply === undefined) { reply = replyTarget; replyTarget = null; updateReplyBar(); }
   const payload = { text, senderEmail: me, createdAt: serverTimestamp(), expiresAtMs, expiresAt: Timestamp.fromMillis(expiresAtMs) };
   if (vis) payload.visibleAtMs = vis;
-  if (reply && reply.id) payload.replyTo = { id: reply.id, text: reply.text, by: reply.by };
   try {
     await setDoc(doc(db, 'messages', id), payload);
     notifyOther(vis);
   } catch (error) {
     console.warn('Send failed', error);
-    failed.set(id, { text, exp: expiresAtMs, vis, at: Date.now(), reply: reply || null });
+    failed.set(id, { text, exp: expiresAtMs, vis, at: Date.now() });
     render();
     toast(error && error.code === 'permission-denied' ? 'Not allowed by Firestore rules.' : 'Message not sent. Tap Retry.');
   }
@@ -487,144 +492,12 @@ messagesEl.addEventListener('click', event => {
   const retry = event.target.closest('.retry-btn');
   if (retry) {
     const f = failed.get(retry.dataset.id);
-    if (f) send(f.text, { id: retry.dataset.id, exp: f.exp, vis: f.vis, reply: f.reply || null });
+    if (f) send(f.text, { id: retry.dataset.id, exp: f.exp, vis: f.vis });
     return;
   }
-  const replyButton = event.target.closest('.msg-reply');
-  if (replyButton) { startReply(replyButton.dataset.id); return; }
-  const quoted = event.target.closest('.reply-quote');
-  if (quoted) { jumpToMessage(quoted.dataset.id); return; }
   const del = event.target.closest('.msg-del');
   if (del) deleteMessage(del.dataset.id);
 });
-
-// ---------- single device login ----------
-async function kickOut() {
-  if (kicking) return;
-  kicking = true;
-  try {
-    // Remove this device's push address so the old device stops getting notifications.
-    const registration = await Promise.race([navigator.serviceWorker.ready, new Promise((_, reject) => setTimeout(reject, 3000))]);
-    const subscription = await registration.pushManager.getSubscription();
-    if (subscription && me) await setDoc(doc(db, 'pushEndpoints', me), { endpoints: arrayRemove(subscription.endpoint) }, { merge: true });
-  } catch { /* not important */ }
-  try { await signOut(auth); } catch { /* ignore */ }
-  loginError.textContent = 'You were signed out because this account was opened on another device.';
-  kicking = false;
-}
-function watchSession() {
-  if (unsubscribeSession) { unsubscribeSession(); unsubscribeSession = null; }
-  const email = me;
-  const ref = doc(db, 'sessions', email);
-  // Claim the session for this device first, then listen for another device taking it over.
-  setDoc(ref, { deviceId: DEVICE_ID, updatedAt: serverTimestamp() }).then(() => {
-    if (me !== email || unsubscribeSession) return;
-    unsubscribeSession = onSnapshot(ref, snapshot => {
-      if (snapshot.metadata.fromCache || snapshot.metadata.hasPendingWrites) return;
-      const data = snapshot.data();
-      if (data && data.deviceId && data.deviceId !== DEVICE_ID) kickOut();
-    }, error => console.warn('Session watch failed', error));
-  }).catch(error => console.warn('Session claim failed', error));
-}
-
-// ---------- settings: message sound ----------
-const SOUNDS = { off: '🔕 Off', ding: '🔔 Ding', pop: '💬 Pop', bell: '🛎 Bell', chime: '🎶 Chime' };
-let soundChoice = 'ding';
-try { soundChoice = localStorage.getItem('ourchat-sound') || 'ding'; } catch { /* storage blocked */ }
-if (!SOUNDS[soundChoice]) soundChoice = 'ding';
-let audioCtx = null;
-function getAudio() {
-  if (!audioCtx) {
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return null;
-    audioCtx = new AC();
-  }
-  if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
-  return audioCtx;
-}
-function tone(ctx, freq, start, dur, vol = 0.25, endFreq = 0) {
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
-  osc.type = 'sine';
-  osc.frequency.setValueAtTime(freq, start);
-  if (endFreq) osc.frequency.exponentialRampToValueAtTime(endFreq, start + dur);
-  gain.gain.setValueAtTime(0.0001, start);
-  gain.gain.exponentialRampToValueAtTime(vol, start + 0.01);
-  gain.gain.exponentialRampToValueAtTime(0.0001, start + dur);
-  osc.connect(gain);
-  gain.connect(ctx.destination);
-  osc.start(start);
-  osc.stop(start + dur + 0.05);
-}
-function playSound(name = soundChoice) {
-  if (name === 'off') return;
-  const ctx = getAudio();
-  if (!ctx) return;
-  const t = ctx.currentTime + 0.02;
-  if (name === 'ding') tone(ctx, 880, t, 0.5);
-  else if (name === 'pop') tone(ctx, 700, t, 0.14, 0.3, 180);
-  else if (name === 'bell') { tone(ctx, 660, t, 1.0, 0.2); tone(ctx, 1320, t, 0.7, 0.1); tone(ctx, 1980, t, 0.4, 0.05); }
-  else if (name === 'chime') [784, 988, 1175].forEach((f, i) => tone(ctx, f, t + i * 0.16, 0.4));
-}
-// Browsers only allow sound after the first tap, so prepare the audio on the first tap.
-document.addEventListener('pointerdown', () => getAudio(), { once: true });
-
-// The service worker cannot read localStorage, so keep the chosen sound in Cache Storage for it.
-function saveSoundForWorker() {
-  try {
-    if ('caches' in window) caches.open('ourchat-settings').then(cache => cache.put('./ourchat-sound', new Response(soundChoice))).catch(() => {});
-  } catch { /* ignore */ }
-}
-saveSoundForWorker();
-// Play for an incoming message; the app listener and the push signal can both fire, so only play once.
-let lastIncomingAt = 0;
-function playIncoming() {
-  if (Date.now() - lastIncomingAt < 2500) return;
-  lastIncomingAt = Date.now();
-  playSound();
-}
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.addEventListener('message', event => {
-    if (event.data && event.data.type === 'ourchat-push' && document.hidden) playIncoming();
-  });
-}
-
-const settingsDialog = document.createElement('dialog');
-settingsDialog.id = 'settingsDialog';
-settingsDialog.innerHTML = `<div style="padding:22px">
-  <div class="dialog-head"><div><p class="eyebrow">OURCHAT</p><h2>Settings</h2></div><button type="button" class="icon-btn" id="settingsClose" aria-label="Close">×</button></div>
-  <p class="eyebrow">MESSAGE SOUND</p>
-  <div class="theme-options" id="soundOptions"></div>
-  <p class="field-help">App open or in the background: the chosen sound plays. App closed (Android): the notification vibrates in a pattern that matches the sound (Off = silent).</p>
-  <p class="field-help">To change the real notification ringtone when the app is closed: Android Settings → Apps → OurChat (or Chrome) → Notifications → pick the channel → Sound.</p>
-  <div class="dialog-actions"><button type="button" class="secondary-btn" id="settingsLook">App look</button><button type="button" class="primary-btn" id="settingsDone">Done</button></div>
-</div>`;
-document.body.appendChild(settingsDialog);
-const soundOptions = settingsDialog.querySelector('#soundOptions');
-function drawSoundOptions() {
-  soundOptions.innerHTML = Object.entries(SOUNDS).map(([key, label]) =>
-    `<button type="button" class="theme-choice${key === soundChoice ? ' selected' : ''}" data-sound="${key}">${label}</button>`).join('');
-}
-soundOptions.addEventListener('click', event => {
-  const button = event.target.closest('[data-sound]');
-  if (!button) return;
-  soundChoice = button.dataset.sound;
-  try { localStorage.setItem('ourchat-sound', soundChoice); } catch { /* storage blocked */ }
-  saveSoundForWorker();
-  drawSoundOptions();
-  playSound(soundChoice);
-});
-settingsDialog.querySelector('#settingsClose').addEventListener('click', () => settingsDialog.close());
-settingsDialog.querySelector('#settingsDone').addEventListener('click', () => settingsDialog.close());
-settingsDialog.querySelector('#settingsLook').addEventListener('click', () => {
-  settingsDialog.close();
-  const look = $('#appearanceBtn');
-  if (look) look.click();
-});
-function openSettings() {
-  drawSoundOptions();
-  settingsDialog.showModal();
-}
 
 // ---------- start / stop ----------
 function startChat(email) {
@@ -633,43 +506,31 @@ function startChat(email) {
   overlay.classList.add('hidden');
   setupUi();
   messagesEl.innerHTML = '<div class="chat-empty">Loading messages…</div>';
-  firstSnapshot = true;
+  forceBottomUntil = Date.now() + 6000;
   const q = query(collection(db, 'messages'), orderBy('createdAt', 'desc'), limit(300));
   unsubscribe = onSnapshot(q, { includeMetadataChanges: true }, snapshot => {
     lastDocs = snapshot.docs.map(d => {
       const data = d.data({ serverTimestamps: 'estimate' });
       const created = data.createdAt && data.createdAt.toDate ? data.createdAt.toDate() : new Date();
-      return { id: d.id, text: String(data.text || ''), senderEmail: data.senderEmail, created, visibleAtMs: Number(data.visibleAtMs) || 0, expiresAtMs: Number(data.expiresAtMs) || 0, pending: d.metadata.hasPendingWrites,
-        replyTo: data.replyTo && typeof data.replyTo === 'object' ? { id: String(data.replyTo.id || ''), text: String(data.replyTo.text || ''), by: String(data.replyTo.by || '') } : null };
+      return { id: d.id, text: String(data.text || ''), senderEmail: data.senderEmail, created, visibleAtMs: Number(data.visibleAtMs) || 0, expiresAtMs: Number(data.expiresAtMs) || 0, pending: d.metadata.hasPendingWrites };
     });
     render();
     cleanupExpired();
-    if (!firstSnapshot) {
-      const nowMs = Date.now();
-      const incoming = snapshot.docChanges().some(change => {
-        if (change.type !== 'added' || change.doc.metadata.hasPendingWrites) return false;
-        const data = change.doc.data();
-        return data.senderEmail !== me && !(Number(data.visibleAtMs) > nowMs);
-      });
-      if (incoming) playIncoming();
-    }
-    firstSnapshot = false;
   }, error => {
     console.warn('Listen failed', error);
     messagesEl.innerHTML = `<div class="chat-empty">Could not load messages (${escapeHtml(error.code || 'error')}).</div>`;
   });
   autoPush();
-  watchSession();
 }
 function stopChat() {
   if (unsubscribe) { unsubscribe(); unsubscribe = null; }
-  if (unsubscribeSession) { unsubscribeSession(); unsubscribeSession = null; }
-  me = null; other = null; lastDocs = []; failed.clear(); replyTarget = null; updateReplyBar();
+  me = null; other = null; lastDocs = []; failed.clear();
   messagesEl.innerHTML = '';
   overlay.classList.remove('hidden');
 }
 
 onAuthStateChanged(auth, user => {
+  if (!IS_APP) return; // in a normal browser tab: never load or show the chat
   if (!user) { stopChat(); return; }
   const email = String(user.email || '').toLowerCase();
   if (!ALLOWED.includes(email)) {
@@ -679,5 +540,15 @@ onAuthStateChanged(auth, user => {
   }
   startChat(email);
 });
+
+// When the app returns to the front (for example after tapping a notification), show the newest message.
+function showLatest() {
+  if (!me) return;
+  forceBottomUntil = Date.now() + 2500;
+  render();
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') showLatest(); });
+window.addEventListener('focus', showLatest);
+window.addEventListener('pageshow', showLatest);
 
 setInterval(() => { if (me) { if (nextWake && nextWake <= Date.now()) render(); cleanupExpired(); } }, 10000);
