@@ -4,7 +4,7 @@ import { signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'https:/
 import { collection, doc, setDoc, getDoc, getDocs, deleteDoc, writeBatch, arrayUnion, arrayRemove, Timestamp, query, orderBy, limit, onSnapshot, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
 const ALLOWED = ['gnanasekar308@gmail.com', 'venkathu0637@gmail.com'];
-const WORKER_URL = 'https://ourchat-push.gnanasekar308.workers.dev/';
+export const WORKER_URL = 'https://ourchat-push.gnanasekar308.workers.dev/';
 const $ = selector => document.querySelector(selector);
 const messagesEl = $('#messages');
 
@@ -66,6 +66,22 @@ let privacy = false;
 try { privacy = localStorage.getItem('ourchat-privacy') === '1'; } catch { /* storage blocked */ }
 const failed = new Map();
 const deleting = new Set();
+
+// Small bridge so src/extras.js (presence, typing, read receipts, look settings, managers) can use this module's state.
+export const api = {
+  ui: { typing: false },
+  pushActive: false,
+  hooks: { start: [], stop: [], render: [] },
+  get me() { return me; },
+  get other() { return other; },
+  get docs() { return lastDocs; },
+  db,
+  toast: message => toast(message),
+  render: () => render(),
+  notifyOther: at => notifyOther(at),
+  nextMidnightIST: t => nextMidnightIST(t)
+};
+const runHooks = (list, arg) => list.forEach(fn => { try { fn(arg); } catch (error) { console.warn('hook failed', error); } });
 
 function toast(message) {
   const el = $('#toast');
@@ -323,12 +339,22 @@ function render() {
       if (m.failed) status = `<span class="status failed">● Not sent</span><button type="button" class="retry-btn" data-id="${escapeHtml(m.id)}">Retry</button>`;
       else if (m.scheduled) status = '<span class="status pending">● Scheduled</span>';
       else if (m.pending) status = '<span class="status pending">● Sending</span>';
-      else status = '<span class="status sent">● Sent</span>';
+      else if (m.readAtMs) status = '<span class="status sent">● Read</span>';
+      else status = '<span class="status pending">● Sent</span>';
     }
+    const tint = !m.mine ? '' : m.failed ? ' st-fail' : m.scheduled ? '' : m.readAtMs ? ' st-read' : ' st-sent';
+    const fwd = `<button type="button" class="msg-fwd" data-id="${escapeHtml(m.id)}" title="Forward" aria-label="Forward message">↪</button>`;
     const del = `<button type="button" class="msg-del" data-id="${escapeHtml(m.id)}" title="Delete" aria-label="Delete message">🗑</button>`;
-    row.innerHTML = `<div class="bubble${m.scheduled ? ' scheduled' : ''}"><p>${escapeHtml(m.text)}</p><div class="message-meta"><time>${escapeHtml(time)}</time>${status}${expiry}${del}</div></div>`;
+    row.innerHTML = `<div class="bubble${m.scheduled ? ' scheduled' : ''}${tint}"><p>${escapeHtml(m.text)}</p><div class="message-meta"><time>${escapeHtml(time)}</time>${status}${expiry}${fwd}${del}</div></div>`;
     messagesEl.appendChild(row);
   }
+  if (api.ui.typing) {
+    const typingRow = document.createElement('div');
+    typingRow.className = 'typing-indicator';
+    typingRow.innerHTML = '<span></span><span></span><span></span><small>typing…</small>';
+    messagesEl.appendChild(typingRow);
+  }
+  runHooks(api.hooks.render, items);
   const preview = $('#convPreview');
   const last = [...items].reverse().find(m => !m.scheduled) || items[items.length - 1];
   if (preview) preview.textContent = privacy ? '◈ Privacy on' : (last ? `${last.mine ? 'You: ' : ''}${last.text}` : 'No messages yet');
@@ -346,6 +372,16 @@ function cleanupExpired() {
       deleting.delete(m.id);
     });
   }
+}
+// Forward: opens the phone/PC share sheet (WhatsApp, Telegram, SMS ...). If sharing is not available, the text is copied.
+async function forwardMessage(id) {
+  const found = lastDocs.find(m => m.id === id) || (failed.has(id) ? { text: failed.get(id).text } : null);
+  if (!found || !found.text) return;
+  if (navigator.share) {
+    try { await navigator.share({ text: found.text }); return; } catch (error) { if (error && error.name === 'AbortError') return; }
+  }
+  try { await navigator.clipboard.writeText(found.text); toast('Message copied. Paste it where you want to forward it.'); }
+  catch { toast('Could not forward. Press and hold the text to copy it.'); }
 }
 async function deleteMessage(id) {
   if (failed.has(id)) { failed.delete(id); render(); return; }
@@ -425,6 +461,7 @@ async function ensurePush(interactive) {
     await setDoc(doc(db, 'pushEndpoints', me), { endpoints: arrayUnion(subscription.endpoint), updatedAt: serverTimestamp() }, { merge: true });
     const button = $('#notifyBtn');
     if (button) button.classList.add('hidden');
+    api.pushActive = true;
     if (interactive) toast('Notifications are on for this device.');
     return true;
   } catch (error) {
@@ -495,6 +532,8 @@ messagesEl.addEventListener('click', event => {
     if (f) send(f.text, { id: retry.dataset.id, exp: f.exp, vis: f.vis });
     return;
   }
+  const fwd = event.target.closest('.msg-fwd');
+  if (fwd) { forwardMessage(fwd.dataset.id); return; }
   const del = event.target.closest('.msg-del');
   if (del) deleteMessage(del.dataset.id);
 });
@@ -505,6 +544,7 @@ function startChat(email) {
   other = ALLOWED.find(e => e !== email) || email;
   overlay.classList.add('hidden');
   setupUi();
+  runHooks(api.hooks.start);
   messagesEl.innerHTML = '<div class="chat-empty">Loading messages…</div>';
   forceBottomUntil = Date.now() + 6000;
   const q = query(collection(db, 'messages'), orderBy('createdAt', 'desc'), limit(300));
@@ -512,7 +552,7 @@ function startChat(email) {
     lastDocs = snapshot.docs.map(d => {
       const data = d.data({ serverTimestamps: 'estimate' });
       const created = data.createdAt && data.createdAt.toDate ? data.createdAt.toDate() : new Date();
-      return { id: d.id, text: String(data.text || ''), senderEmail: data.senderEmail, created, visibleAtMs: Number(data.visibleAtMs) || 0, expiresAtMs: Number(data.expiresAtMs) || 0, pending: d.metadata.hasPendingWrites };
+      return { id: d.id, text: String(data.text || ''), senderEmail: data.senderEmail, created, visibleAtMs: Number(data.visibleAtMs) || 0, expiresAtMs: Number(data.expiresAtMs) || 0, readAtMs: Number(data.readAtMs) || 0, pending: d.metadata.hasPendingWrites };
     });
     render();
     cleanupExpired();
@@ -523,6 +563,8 @@ function startChat(email) {
   autoPush();
 }
 function stopChat() {
+  runHooks(api.hooks.stop);
+  api.ui.typing = false;
   if (unsubscribe) { unsubscribe(); unsubscribe = null; }
   me = null; other = null; lastDocs = []; failed.clear();
   messagesEl.innerHTML = '';

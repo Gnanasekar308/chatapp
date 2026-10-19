@@ -13,9 +13,11 @@ let currentTheme = safeStorageGet(STORAGE_KEYS.theme) || 'default';
 let draftTheme = currentTheme;
 let toastTimer = null;
 let currentExpiryMs = 24 * 60 * 60 * 1000;
+let customExpiryAt = null;
 const messageExpiryTimers = new WeakMap();
 const reminderTimers = new Map();
 window.ourchatGetExpiryMs = () => currentExpiryMs;
+window.ourchatGetExpiresAt = () => (customExpiryAt && customExpiryAt > Date.now() + 60000 ? customExpiryAt : Date.now() + currentExpiryMs);
 
 function safeStorageGet(key) {
   try { return localStorage.getItem(key); } catch { return null; }
@@ -93,7 +95,9 @@ function openDialog(type) {
   save.textContent = type === 'appearance' ? 'Apply look' : 'Save';
   if (type === 'timer') {
     title.textContent = 'Set a message timer';
-    dialogBody.innerHTML = `<label class="field-label" for="timerMinutes">Disappear after</label><select id="timerMinutes" class="field-select"><option value="60">1 hour</option><option value="360">6 hours</option><option value="1440" selected>24 hours</option><option value="10080">7 days</option></select><p class="field-help">This is a local preview timer. Real deletion for every participant needs server-side expiry handling.</p>`;
+    dialogBody.innerHTML = `<label class="field-label" for="timerMinutes">Disappear after</label><select id="timerMinutes" class="field-select"><option value="60">1 hour</option><option value="360">6 hours</option><option value="1440" selected>24 hours</option><option value="10080">7 days</option><option value="custom">Pick a date &amp; time…</option></select><div id="timerCustomWrap" class="hidden"><label class="field-label" for="timerAt">Messages disappear on</label><input class="field-input" id="timerAt" type="datetime-local"></div><p class="field-help">New messages you send will disappear at this time for both of you.</p>`;
+    const pickedTimer = $('#timerMinutes');
+    pickedTimer.addEventListener('change', () => $('#timerCustomWrap').classList.toggle('hidden', pickedTimer.value !== 'custom'));
   } else if (type === 'reminder') {
     title.textContent = 'Create a reminder';
     dialogBody.innerHTML = `<label class="field-label" for="reminderText">Reminder</label><input class="field-input" id="reminderText" maxlength="160" placeholder="e.g. Send Mira the photos" required><label class="field-label" for="reminderAt">Remind me at</label><input class="field-input" id="reminderAt" type="datetime-local" required><p class="field-help">Reminders are saved in this browser and trigger while this app is open. Background delivery while closed needs push-service setup.</p>`;
@@ -232,17 +236,6 @@ input.addEventListener('keydown', event => {
     if (typeof composer.requestSubmit === 'function') composer.requestSubmit();
   }
 });
-// Dialog fix: Enter must press "Save" (the first button in the form is the x close button), and Esc must not close the box.
-dialog.addEventListener('keydown', event => {
-  if (event.key !== 'Enter' || event.isComposing) return;
-  if (event.target && event.target.tagName === 'INPUT') { event.preventDefault(); $('#dialogSave').click(); }
-});
-dialog.addEventListener('cancel', event => event.preventDefault());
-// x and Cancel must always close the box, even when a required field is still empty.
-$$('button[value="cancel"]', dialog).forEach(button => button.addEventListener('click', event => {
-  event.preventDefault();
-  dialog.close();
-}));
 $('#actionForm').addEventListener('submit', event => {
   if (event.submitter?.value === 'cancel') return;
   event.preventDefault();
@@ -268,7 +261,17 @@ $('#actionForm').addEventListener('submit', event => {
     dialog.close(); return;
   }
   if (action === 'timer') {
-    const mins = Number($('#timerMinutes')?.value || 1440);
+    const choice = $('#timerMinutes')?.value || '1440';
+    if (choice === 'custom') {
+      const raw = $('#timerAt')?.value;
+      const at = raw ? new Date(raw).getTime() : NaN;
+      if (!Number.isFinite(at) || at <= Date.now() + 60000) { toast('Pick a date and time a few minutes from now.'); return; }
+      customExpiryAt = at;
+      toast(`New messages will disappear on ${new Date(at).toLocaleString()}.`);
+      dialog.close(); return;
+    }
+    customExpiryAt = null;
+    const mins = Number(choice);
     if (![60, 360, 1440, 10080].includes(mins)) { toast('Choose one of the available timer options.'); return; }
     currentExpiryMs = mins * 60 * 1000;
     $$('.message-row').forEach(row => {
@@ -307,7 +310,6 @@ $$('.conversation').forEach(conversation => conversation.addEventListener('click
 // Restore local preferences and timers. This is still a single-device prototype.
 document.body.dataset.theme = ['default', 'calculator', 'clock'].includes(currentTheme) ? currentTheme : 'default';
 initializeExistingMessageExpiry();
-restoreReminders();
 if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
   navigator.serviceWorker.register('./sw.js').catch(error => console.warn('OurChat service worker registration failed:', error));
 }
