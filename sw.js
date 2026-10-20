@@ -1,5 +1,5 @@
 'use strict';
-const CACHE = 'ourchat-shell-v9';
+const CACHE = 'ourchat-shell-v10';
 const ASSETS = [
   './', './index.html', './src/styles.css', './src/chat.css', './src/app.js', './src/chat.js', './src/extras.js', './src/firebase.js',
   './manifest.webmanifest', './assets/icon-192.png', './assets/icon-512.png'
@@ -72,15 +72,24 @@ async function markReminderDone(reminder) {
   });
 }
 
-async function readPrefs() {
+async function readPref(key) {
   try {
     const database = await openReminderDb();
     return await new Promise((resolve, reject) => {
-      const query = database.transaction('settings').objectStore('settings').get('prefs');
-      query.onsuccess = () => resolve(query.result || {});
+      const query = database.transaction('settings').objectStore('settings').get(key);
+      query.onsuccess = () => resolve(query.result);
       query.onerror = () => reject(query.error);
     });
-  } catch (error) { return {}; }
+  } catch (error) { return undefined; }
+}
+async function writePref(key, value) {
+  const database = await openReminderDb();
+  return new Promise((resolve, reject) => {
+    const tx = database.transaction('settings', 'readwrite');
+    tx.objectStore('settings').put(value, key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
 }
 async function appIsInFront() {
   const list = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
@@ -102,10 +111,11 @@ self.addEventListener('push', event => {
 
     if (data && data.t) {
       if (await appIsInFront()) return;
-      const prefs = await readPrefs();
-      const previous = await self.registration.getNotifications({ tag: 'ourchat-message' });
-      const count = ((previous[0] && previous[0].data && previous[0].data.count) || 0) + 1;
-      await self.registration.showNotification(count > 1 ? data.t + ' (' + count + ')' : data.t, {
+      const prefs = (await readPref('prefs')) || {};
+      // unread messages since the app was last opened (the app resets this to 0 when it opens)
+      const count = (Number(await readPref('unread')) || 0) + 1;
+      try { await writePref('unread', count); } catch (error) { /* ignore */ }
+      await self.registration.showNotification(count > 1 ? data.t + ' (' + count + ' messages)' : data.t, {
         body: prefs.showPreview === false ? 'New message' : String(data.b || 'New message'),
         tag: 'ourchat-message',
         renotify: true,
@@ -120,13 +130,13 @@ self.addEventListener('push', event => {
     try { due = (await readReminders()).filter(r => !r.done && r.at <= Date.now() + 30000); } catch (error) { due = []; }
     if (due.length) {
       for (const reminder of due) {
-        await self.registration.showNotification('⏰ OurChat reminder', { body: reminder.text, tag: 'reminder-' + reminder.id, requireInteraction: true, ...icons });
+        await self.registration.showNotification('⏰ கனவுரை reminder', { body: reminder.text, tag: 'reminder-' + reminder.id, requireInteraction: true, ...icons });
         try { await markReminderDone(reminder); } catch (error) { /* ignore */ }
       }
       return;
     }
     if (await appIsInFront()) return;
-    await self.registration.showNotification('OurChat', { body: 'You have a new message', tag: 'ourchat-message', renotify: true, ...icons });
+    await self.registration.showNotification('கனவுரை', { body: 'You have a new message', tag: 'ourchat-message', renotify: true, ...icons });
   })());
 });
 self.addEventListener('notificationclick', event => {

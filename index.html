@@ -4,17 +4,19 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#10111b" />
-  <meta name="description" content="A private, elegant chat space with timed messages and reminders." />
+  <meta name="description" content="கனவுரை: a private chat space for two" />
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="stylesheet" href="src/styles.css" />
   <link rel="stylesheet" href="src/chat.css" />
-  <title>OurChat · Private Chat</title>
+  <title>கனவுரை</title>
 </head>
 <body>
   <div class="app-shell">
     <aside class="rail">
       <div class="brand-mark">O<span>ur</span></div>
       <button class="rail-btn active" aria-label="Chats" title="Chats">◉</button>
+      <button class="rail-btn" id="remindersNav" aria-label="Reminders" title="Reminders">◷</button>
+      <button class="rail-btn" id="settingsNav" aria-label="Settings" title="Appearance settings">⚙</button>
       <div class="rail-spacer"></div><div class="avatar tiny">G</div>
     </aside>
     <aside class="sidebar">
@@ -29,14 +31,7 @@
       <div class="sidebar-footer"><span class="secure-icon">✦</span><div><strong>Quiet by design</strong><p>Outgoing previews expire locally</p></div></div>
     </aside>
     <main class="chat-panel">
-      <header class="chat-header"><div class="contact"><div class="avatar pink">M</div><div><h2 id="contactName">Mira Chen</h2><p><span class="presence"></span> Active now <span class="encrypted">· Private space</span></p></div></div><div class="header-actions"><button class="icon-btn call-btn" id="audioCall" title="Audio call">♬</button><button class="icon-btn call-btn" id="videoCall" title="Video call">▣</button><div class="header-menu-wrap">
-        <button class="icon-btn" id="detailsBtn" title="More options" aria-label="More options" aria-expanded="false" aria-controls="headerMenu">⋯</button>
-        <div class="header-menu" id="headerMenu" hidden>
-          <button class="header-menu-item" id="remindersNav" type="button"><span>◷</span> Reminders</button>
-          <button class="header-menu-item" id="settingsNav" type="button"><span>⚙</span> Settings</button>
-          <button class="header-menu-item" id="chatDetailsMenu" type="button"><span>ⓘ</span> Chat details</button>
-        </div>
-      </div></div></header>
+      <header class="chat-header"><div class="contact"><div class="avatar pink">M</div><div><h2 id="contactName">Mira Chen</h2><p><span class="presence"></span> Active now <span class="encrypted">· Private space</span></p></div></div><div class="header-actions"><button class="icon-btn call-btn" id="audioCall" title="Audio call">♬</button><button class="icon-btn call-btn" id="videoCall" title="Video call">▣</button><button class="icon-btn" id="detailsBtn" title="Chat details">⋯</button></div></header>
       <div class="security-banner"><span>✧</span> Outgoing preview messages expire locally after 24 hours <button id="learnExpiry">Details</button></div>
       <section class="messages" id="messages" aria-live="polite">
         <div class="day-divider"><span>TODAY</span></div>

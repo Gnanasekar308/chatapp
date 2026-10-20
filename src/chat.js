@@ -1,4 +1,4 @@
-// OurChat live chat: login, real-time messages, push, scheduled messages, delete, privacy mode.
+// கனவுரை (OurChat) live chat: login, real-time messages, push, scheduled messages, delete, privacy mode.
 import { auth, db } from './firebase.js';
 import { signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import { collection, doc, setDoc, getDoc, getDocs, deleteDoc, writeBatch, arrayUnion, arrayRemove, Timestamp, query, orderBy, limit, onSnapshot, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
@@ -21,15 +21,15 @@ if (!IS_APP) {
   const gate = document.createElement('div');
   gate.id = 'appGate';
   gate.innerHTML = `<div class="gate-card">
-    <p class="eyebrow">OURCHAT</p>
-    <h2>Open the OurChat app</h2>
+    <p class="eyebrow">கனவுரை</p>
+    <h2>Open the கனவுரை app</h2>
     <p class="login-sub">Your chat is private and opens only in the installed app, not in the browser.</p>
-    <button class="primary-btn" id="gateInstall" type="button" hidden>Install OurChat</button>
-    <p class="gate-done" id="gateDone" hidden>Installed. Close this tab and open <b>OurChat</b> from your Start menu or home screen.</p>
+    <button class="primary-btn" id="gateInstall" type="button" hidden>Install கனவுரை</button>
+    <p class="gate-done" id="gateDone" hidden>Installed. Close this tab and open <b>கனவுரை</b> from your Start menu or home screen.</p>
     <div class="gate-steps" id="gateSteps">
-      <p><b>PC (Chrome):</b> tap the Install icon at the right end of the address bar, then Install. Later, open OurChat from the Start menu.</p>
-      <p><b>Android:</b> Chrome menu ⋮ → Install app. Then open OurChat from the home screen.</p>
-      <p><b>iPhone:</b> in Safari tap Share → Add to Home Screen. Then open OurChat from the home screen.</p>
+      <p><b>PC (Chrome):</b> tap the Install icon at the right end of the address bar, then Install. Later, open கனவுரை from the Start menu.</p>
+      <p><b>Android:</b> Chrome menu ⋮ → Install app. Then open கனவுரை from the home screen.</p>
+      <p><b>iPhone:</b> in Safari tap Share → Add to Home Screen. Then open கனவுரை from the home screen.</p>
       <p>Already installed? Open it from the Start menu or home screen instead of this tab.</p>
     </div>
   </div>`;
@@ -69,7 +69,7 @@ const deleting = new Set();
 
 // Small bridge so src/extras.js (presence, typing, read receipts, look settings, managers) can use this module's state.
 export const api = {
-  ui: { typing: false },
+  ui: { typing: false, reply: null, onReplyChange: null },
   pushActive: false,
   hooks: { start: [], stop: [], render: [] },
   get me() { return me; },
@@ -79,6 +79,10 @@ export const api = {
   toast: message => toast(message),
   render: () => render(),
   notifyOther: at => notifyOther(at),
+  deleteMessage: id => deleteMessage(id),
+  clearAll: () => clearAll(),
+  enablePush: () => ensurePush(true),
+  signOutUser: () => { if (confirm('Sign out of கனவுரை?')) signOut(auth); },
   nextMidnightIST: t => nextMidnightIST(t)
 };
 const runHooks = (list, arg) => list.forEach(fn => { try { fn(arg); } catch (error) { console.warn('hook failed', error); } });
@@ -131,7 +135,7 @@ function toLocalInput(d) {
 const overlay = document.createElement('div');
 overlay.id = 'loginOverlay';
 overlay.innerHTML = `<form class="login-card" id="loginForm">
-  <p class="eyebrow">OURCHAT</p><h2>Sign in</h2><p class="login-sub">Private space for two people.</p>
+  <p class="eyebrow">கனவுரை</p><h2>Sign in</h2><p class="login-sub">Private space for two people.</p>
   <label class="field-label" for="loginEmail">Email</label>
   <input class="field-input" id="loginEmail" type="email" autocomplete="username" required>
   <label class="field-label" for="loginPassword">Password</label>
@@ -168,7 +172,7 @@ $('#loginForm').addEventListener('submit', async event => {
 const scheduleDialog = document.createElement('dialog');
 scheduleDialog.id = 'scheduleDialog';
 scheduleDialog.innerHTML = `<form method="dialog" id="scheduleForm">
-  <div class="dialog-head"><div><p class="eyebrow">OURCHAT TOOLS</p><h2>Schedule message</h2></div><button class="icon-btn" value="cancel" aria-label="Close">×</button></div>
+  <div class="dialog-head"><div><p class="eyebrow">கனவுரை</p><h2>Schedule message</h2></div><button class="icon-btn" value="cancel" aria-label="Close">×</button></div>
   <label class="field-label" for="scheduleAt">Send on</label>
   <input class="field-input" id="scheduleAt" type="datetime-local" required>
   <p class="field-help" id="schedulePreview"></p>
@@ -245,7 +249,7 @@ function setupUi() {
   }
   if (uiReady) return;
   uiReady = true;
-  if (mine) mine.addEventListener('click', () => { if (confirm('Sign out of OurChat?')) signOut(auth); });
+  if (mine) mine.addEventListener('click', () => { if (confirm('Sign out of கனவுரை?')) signOut(auth); });
 
   // Timer button now schedules a message (replace the old handler by cloning the button).
   const oldTimer = $('#timerBtn');
@@ -296,7 +300,7 @@ function render() {
     items.push({ ...m, mine: mineMsg, scheduled, at: new Date(m.visibleAtMs || m.created.getTime()) });
   }
   for (const [id, f] of failed) {
-    if (!lastDocs.some(m => m.id === id)) items.push({ id, text: f.text, senderEmail: me, mine: true, scheduled: false, failed: true, fwd: f.fwd, fwdFrom: f.fwdFrom, expiresAtMs: f.exp, at: new Date(f.vis || f.at) });
+    if (!lastDocs.some(m => m.id === id)) items.push({ id, text: f.text, senderEmail: me, mine: true, scheduled: false, failed: true, fwd: f.fwd, fwdFrom: f.fwdFrom, replyTo: f.reply || null, expiresAtMs: f.exp, at: new Date(f.vis || f.at) });
   }
   items.sort((a, b) => a.at - b.at);
   if (privacy) {
@@ -343,9 +347,9 @@ function render() {
       else status = '<span class="status pending">● Sent</span>';
     }
     const tint = !m.mine ? '' : m.failed ? ' st-fail' : m.scheduled ? '' : m.readAtMs ? ' st-read' : ' st-sent';
-    const fwd = `<button type="button" class="msg-fwd" data-id="${escapeHtml(m.id)}" title="Forward in this chat" aria-label="Forward message in this chat">↪</button>`;
-    const del = `<button type="button" class="msg-del" data-id="${escapeHtml(m.id)}" title="Delete" aria-label="Delete message">🗑</button>`;
-    row.innerHTML = `<div class="bubble${m.scheduled ? ' scheduled' : ''}${tint}">${m.fwd ? `<span class="fwd-tag">↪ Forwarded${m.fwdFrom ? ' from ' + escapeHtml(prettyName(m.fwdFrom)) : ''}</span>` : ''}<p>${escapeHtml(m.text)}</p><div class="message-meta"><time>${escapeHtml(time)}</time>${status}${expiry}${fwd}${del}</div></div>`;
+    const quote = m.replyTo ? `<div class="reply-quote" data-reply-id="${escapeHtml(m.replyTo.id)}"><b>${escapeHtml(m.replyTo.from === me ? 'You' : prettyName(m.replyTo.from || ''))}</b><span>${escapeHtml(m.replyTo.text)}</span></div>` : '';
+    row.dataset.id = m.id;
+    row.innerHTML = `<div class="bubble${m.scheduled ? ' scheduled' : ''}${tint}">${m.fwd ? `<span class="fwd-tag">↪ Forwarded${m.fwdFrom ? ' from ' + escapeHtml(prettyName(m.fwdFrom)) : ''}</span>` : ''}${quote}<p>${escapeHtml(m.text)}</p><div class="message-meta"><time>${escapeHtml(time)}</time>${status}${expiry}</div></div>`;
     messagesEl.appendChild(row);
   }
   if (api.ui.typing) {
@@ -527,22 +531,28 @@ async function send(text, opts = {}) {
   const payload = { text, senderEmail: me, createdAt: serverTimestamp(), expiresAtMs, expiresAt: Timestamp.fromMillis(expiresAtMs) };
   if (vis) payload.visibleAtMs = vis;
   if (opts.fwd) { payload.fwd = true; payload.fwdFrom = opts.fwdFrom || me; }
+  if (opts.reply && opts.reply.id) payload.replyTo = { id: String(opts.reply.id), text: String(opts.reply.text || '').slice(0, 140), from: String(opts.reply.from || '') };
   try {
     await setDoc(doc(db, 'messages', id), payload);
     notifyOther(vis, text);
   } catch (error) {
     console.warn('Send failed', error);
-    failed.set(id, { text, exp: expiresAtMs, vis, at: Date.now(), fwd: !!opts.fwd, fwdFrom: opts.fwdFrom || '' });
+    failed.set(id, { text, exp: expiresAtMs, vis, at: Date.now(), fwd: !!opts.fwd, fwdFrom: opts.fwdFrom || '', reply: opts.reply || null });
     render();
     toast(error && error.code === 'permission-denied' ? 'Not allowed by Firestore rules.' : 'Message not sent. Tap Retry.');
   }
 }
-window.ourchatSend = text => send(text);
+window.ourchatSend = text => {
+  const reply = api.ui.reply;
+  api.ui.reply = null;
+  if (api.ui.onReplyChange) api.ui.onReplyChange();
+  send(text, { reply });
+};
 messagesEl.addEventListener('click', event => {
   const retry = event.target.closest('.retry-btn');
   if (retry) {
     const f = failed.get(retry.dataset.id);
-    if (f) send(f.text, { id: retry.dataset.id, exp: f.exp, vis: f.vis, fwd: f.fwd, fwdFrom: f.fwdFrom });
+    if (f) send(f.text, { id: retry.dataset.id, exp: f.exp, vis: f.vis, fwd: f.fwd, fwdFrom: f.fwdFrom, reply: f.reply });
     return;
   }
   const fwd = event.target.closest('.msg-fwd');
@@ -565,7 +575,7 @@ function startChat(email) {
     lastDocs = snapshot.docs.map(d => {
       const data = d.data({ serverTimestamps: 'estimate' });
       const created = data.createdAt && data.createdAt.toDate ? data.createdAt.toDate() : new Date();
-      return { id: d.id, text: String(data.text || ''), senderEmail: data.senderEmail, created, visibleAtMs: Number(data.visibleAtMs) || 0, expiresAtMs: Number(data.expiresAtMs) || 0, readAtMs: Number(data.readAtMs) || 0, fwd: !!data.fwd, fwdFrom: String(data.fwdFrom || ''), pending: d.metadata.hasPendingWrites };
+      return { id: d.id, text: String(data.text || ''), senderEmail: data.senderEmail, created, visibleAtMs: Number(data.visibleAtMs) || 0, expiresAtMs: Number(data.expiresAtMs) || 0, readAtMs: Number(data.readAtMs) || 0, fwd: !!data.fwd, fwdFrom: String(data.fwdFrom || ''), replyTo: data.replyTo && typeof data.replyTo === 'object' ? { id: String(data.replyTo.id || ''), text: String(data.replyTo.text || ''), from: String(data.replyTo.from || '') } : null, pending: d.metadata.hasPendingWrites };
     });
     render();
     cleanupExpired();

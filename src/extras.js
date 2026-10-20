@@ -14,17 +14,17 @@ const prettyName = email => { const n = String(email || '').split('@')[0]; retur
 // ============================================================
 // 1) Settings (saved on this device only)
 // ============================================================
-const SET_KEY = 'ourchat.settings.v2';
+const SET_KEY = 'ourchat.settings.v3';
 const DEFAULTS = {
   fs: 100, font: 'system', bold: false,
   bg: '#10111b', panel: '#171925', accent: '#b8a4ff', text: '#f4f4fb', incoming: '#25283a', mine: '#322d4e', read: '#3fb97f', sent: '#fbe9a1', fail: '#ffb3bb',
   bgDim: 45, bgBlur: 0,
   radius: 16, gap: 13, maxw: 83,
-  showTime: true, showExpiry: true, showStatus: true, showActions: true,
-  banner: true, bannerAlways: true, bannerSeconds: 6, bannerPreview: true, pushPreview: true, sound: true, vibrate: true,
+  showTime: true, showExpiry: false, showStatus: false,
+  pushPreview: true,
   blockCopy: true, shareOnline: true, shareTyping: true, readReceipts: true
 };
-const RANGES = { fs: [80, 160], bgDim: [0, 85], bgBlur: [0, 20], radius: [0, 28], gap: [4, 28], maxw: [60, 95], bannerSeconds: [3, 15] };
+const RANGES = { fs: [80, 160], bgDim: [0, 85], bgBlur: [0, 20], radius: [0, 28], gap: [4, 28], maxw: [60, 95] };
 const FONTS = {
   system: "Inter,'Segoe UI',Arial,sans-serif",
   serif: "Georgia,'Times New Roman',serif",
@@ -41,7 +41,13 @@ const isHex = v => typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v);
 
 function loadSettings() {
   let saved = {};
-  try { saved = JSON.parse(localStorage.getItem(SET_KEY) || 'null') || JSON.parse(localStorage.getItem('ourchat.look.v1') || '{}') || {}; } catch { saved = {}; }
+  try {
+    saved = JSON.parse(localStorage.getItem(SET_KEY) || 'null');
+    if (!saved) { // first run of this version: keep the old colours, but start with the clean message boxes
+      saved = JSON.parse(localStorage.getItem('ourchat.settings.v2') || localStorage.getItem('ourchat.look.v1') || '{}') || {};
+      delete saved.showStatus; delete saved.showExpiry; delete saved.showActions;
+    }
+  } catch { saved = {}; }
   const result = { ...DEFAULTS };
   for (const key of Object.keys(DEFAULTS)) {
     const fallback = DEFAULTS[key];
@@ -97,7 +103,6 @@ function applySettings() {
   classes.toggle('hide-time', !S.showTime);
   classes.toggle('hide-expiry', !S.showExpiry);
   classes.toggle('hide-status', !S.showStatus);
-  classes.toggle('hide-actions', !S.showActions);
   classes.toggle('no-copy', S.blockCopy);
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.setAttribute('content', S.bg);
@@ -162,19 +167,12 @@ const SECTIONS = [
   ] },
   { title: 'Show or hide', items: [
     { key: 'showTime', type: 'toggle', label: 'Message time' },
-    { key: 'showStatus', type: 'toggle', label: 'Status (Sent, Read ...)' },
-    { key: 'showExpiry', type: 'toggle', label: 'Disappear time label' },
-    { key: 'showActions', type: 'toggle', label: 'Forward and delete buttons' }
+    { key: 'showStatus', type: 'toggle', label: 'Status words (Sent, Read ...)' },
+    { key: 'showExpiry', type: 'toggle', label: 'Disappear time label' }
   ] },
   { title: 'Notifications', items: [
-    { key: 'banner', type: 'toggle', label: 'Notification banner inside the app' },
-    { key: 'bannerAlways', type: 'toggle', label: 'Show it even while the chat is open' },
-    { key: 'bannerSeconds', type: 'range', label: 'Banner stays for', min: 3, max: 15, step: 1, unit: ' s' },
-    { key: 'bannerPreview', type: 'toggle', label: 'Show message text in the banner' },
     { key: 'pushPreview', type: 'toggle', label: 'Show message text in phone / PC notifications' },
-    { key: 'sound', type: 'toggle', label: 'Sound' },
-    { key: 'vibrate', type: 'toggle', label: 'Vibrate (phone)' },
-    { type: 'button', id: 'testBanner', label: 'Show a test banner' }
+    { type: 'button', id: 'turnOnNotifications', label: 'Turn on notifications on this device' }
   ] },
   { title: 'Privacy', items: [
     { key: 'blockCopy', type: 'toggle', label: 'Make message text hard to copy' },
@@ -187,7 +185,7 @@ function controlHtml(item) {
   if (item.type === 'range') return `<label class="set-row"><span>${esc(item.label)} <b data-val="${item.key}"></b></span><input type="range" data-key="${item.key}" min="${item.min}" max="${item.max}" step="${item.step}"></label>`;
   if (item.type === 'toggle') return `<label class="set-row"><span>${esc(item.label)}</span><input type="checkbox" data-key="${item.key}"></label>`;
   if (item.type === 'select') return `<label class="set-row"><span>${esc(item.label)}</span><select class="field-select set-select" data-key="${item.key}">${item.options.map(o => `<option value="${o[0]}">${esc(o[1])}</option>`).join('')}</select></label>`;
-  if (item.type === 'button') return `<div class="set-row"><span>${esc(item.label)}</span><button type="button" class="secondary-btn" id="${item.id}">Show</button></div>`;
+  if (item.type === 'button') return `<div class="set-row"><span>${esc(item.label)}</span><button type="button" class="secondary-btn" id="${item.id}">Turn on</button></div>`;
   return '';
 }
 function sectionHtml(section) {
@@ -206,7 +204,7 @@ function sectionHtml(section) {
 const settingsDialog = document.createElement('dialog');
 settingsDialog.id = 'settingsDialog';
 settingsDialog.innerHTML = `<form method="dialog">
-  <div class="dialog-head"><div><p class="eyebrow">OURCHAT</p><h2>Settings</h2></div><button class="icon-btn" value="close" aria-label="Close">×</button></div>
+  <div class="dialog-head"><div><p class="eyebrow">கனவுரை</p><h2>Settings</h2></div><button class="icon-btn" value="close" aria-label="Close">×</button></div>
   <p class="field-help">These settings are saved on this device. Open a section to change it.</p>
   ${SECTIONS.map(sectionHtml).join('')}
   <div class="dialog-actions"><button class="secondary-btn" id="settingsReset" type="button">Reset all</button><button class="primary-btn" value="close">Done</button></div>
@@ -243,9 +241,9 @@ settingsDialog.addEventListener('change', event => { if (event.target.dataset &&
 settingsDialog.addEventListener('click', async event => {
   const preset = event.target.closest('[data-preset]');
   if (preset) { S = { ...S, ...PRESETS[preset.dataset.preset] }; applySettings(); saveSettings(); syncSettings(); return; }
+  if (event.target.id === 'turnOnNotifications') { api.enablePush(); return; }
   if (event.target.id === 'bgChoose') { $('#bgFile').click(); return; }
   if (event.target.id === 'bgRemove') { try { await lookDbRun('readwrite', store => store.delete('bg')); } catch { /* ignore */ } showBgBlob(null); toast('Background removed.'); return; }
-  if (event.target.id === 'testBanner') { settingsDialog.close(); setTimeout(() => showBanner({ id: 'test', text: 'Hi! This is how a new message looks.', at: new Date() }, 1), 250); }
 });
 settingsDialog.addEventListener('change', async event => {
   if (event.target.id !== 'bgFile') return;
@@ -276,82 +274,7 @@ async function syncPushPrefs() {
 function openSettings() { syncSettings(); settingsDialog.showModal(); }
 
 // make copying text hard (this cannot stop screenshots)
-$('#messages').addEventListener('contextmenu', event => { if (S.blockCopy && event.target.closest('.bubble')) event.preventDefault(); });
 document.addEventListener('copy', event => { if (S.blockCopy && event.target && event.target.closest && event.target.closest('.bubble')) event.preventDefault(); });
-
-// ============================================================
-// 1b) In-app notification banner (floating cards at the top)
-// ============================================================
-const bannerStack = document.createElement('div');
-bannerStack.id = 'bannerStack';
-document.body.appendChild(bannerStack);
-let unread = 0;
-let audioCtx = null;
-function beep() {
-  try {
-    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-    if (audioCtx.state === 'suspended') audioCtx.resume();
-    const now = audioCtx.currentTime;
-    [[880, 0], [1175, 0.12]].forEach(([freq, offset]) => {
-      const osc = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
-      osc.frequency.value = freq;
-      gain.gain.setValueAtTime(0.0001, now + offset);
-      gain.gain.exponentialRampToValueAtTime(0.12, now + offset + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + offset + 0.18);
-      osc.connect(gain); gain.connect(audioCtx.destination);
-      osc.start(now + offset); osc.stop(now + offset + 0.2);
-    });
-  } catch { /* sound not available */ }
-}
-function removeCard(card) {
-  if (!card.parentNode) return;
-  card.classList.add('leaving');
-  setTimeout(() => card.remove(), 220);
-}
-function showBanner(m, count) {
-  if (!S.banner) return;
-  const name = prettyName(api.other || 'chat');
-  const card = document.createElement('button');
-  card.type = 'button';
-  card.className = 'banner-card';
-  const time = (m.at || new Date()).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  const preview = S.bannerPreview ? (m.text.length > 90 ? m.text.slice(0, 90) + '…' : m.text) : 'New message';
-  card.innerHTML = `<div class="avatar pink banner-avatar">${esc(name.charAt(0))}</div>
-    <div class="banner-main"><strong>${esc(name)}</strong><span>${esc(preview)}</span></div>
-    <div class="banner-side"><time>${esc(time)}</time><i class="banner-badge">${count}</i></div>`;
-  bannerStack.insertBefore(card, bannerStack.firstChild);
-  while (bannerStack.children.length > 3) removeCard(bannerStack.lastChild);
-  const timer = setTimeout(() => removeCard(card), S.bannerSeconds * 1000);
-  card.addEventListener('click', () => {
-    clearTimeout(timer);
-    [...bannerStack.children].forEach(removeCard);
-    unread = 0;
-    const list = $('#messages');
-    list.scrollTop = list.scrollHeight;
-    messageInput.focus();
-  });
-  if (S.sound) beep();
-  if (S.vibrate && navigator.vibrate) navigator.vibrate([60, 40, 60]);
-}
-const seenMessages = new Set();
-let firstRender = true;
-function nearBottom() { const list = $('#messages'); return list.scrollHeight - list.scrollTop - list.clientHeight < 90; }
-api.hooks.start.push(() => { seenMessages.clear(); firstRender = true; unread = 0; });
-api.hooks.render.push(items => {
-  if (document.hasFocus() && nearBottom()) unread = 0;
-  for (const m of items) {
-    if (seenMessages.has(m.id)) continue;
-    seenMessages.add(m.id);
-    if (firstRender || m.mine || m.scheduled || m.failed) continue;
-    if (Date.now() - m.at.getTime() > 45000) continue; // old message loaded from the server, not a new one
-    unread += 1;
-    if (document.visibilityState !== 'visible') continue; // the system notification handles this case
-    const busy = document.hasFocus() && nearBottom() && !document.querySelector('dialog[open]');
-    if (S.bannerAlways || !busy) showBanner(m, unread);
-  }
-  if (items.length) firstRender = false;
-});
 
 // ============================================================
 // 2) Online status, typing, read receipts
@@ -518,7 +441,7 @@ async function fireReminder(reminder) {
   try {
     if ('Notification' in window && Notification.permission === 'granted') {
       const registration = await navigator.serviceWorker.ready;
-      await registration.showNotification('⏰ OurChat reminder', { body: reminder.text, icon: './assets/icon-192.png', badge: './assets/icon-192.png', tag: `reminder-${reminder.id}`, requireInteraction: true });
+      await registration.showNotification('⏰ கனவுரை reminder', { body: reminder.text, icon: './assets/icon-192.png', badge: './assets/icon-192.png', tag: `reminder-${reminder.id}`, requireInteraction: true });
     }
   } catch { /* notification may be blocked */ }
 }
@@ -542,7 +465,7 @@ document.addEventListener('visibilitychange', () => { if (api.me && document.vis
 const editDialog = document.createElement('dialog');
 editDialog.id = 'editDialog';
 editDialog.innerHTML = `<form method="dialog" id="editForm">
-  <div class="dialog-head"><div><p class="eyebrow">OURCHAT TOOLS</p><h2 id="editTitle"></h2></div><button class="icon-btn" value="cancel" aria-label="Close">×</button></div>
+  <div class="dialog-head"><div><p class="eyebrow">கனவுரை</p><h2 id="editTitle"></h2></div><button class="icon-btn" value="cancel" aria-label="Close">×</button></div>
   <label class="field-label" for="editText" id="editTextLabel">Message</label>
   <input class="field-input" id="editText" maxlength="500">
   <label class="field-label" for="editAt">Date and time</label>
@@ -577,7 +500,7 @@ $('#editSave').addEventListener('click', event => {
 const manageDialog = document.createElement('dialog');
 manageDialog.id = 'manageDialog';
 manageDialog.innerHTML = `<form method="dialog">
-  <div class="dialog-head"><div><p class="eyebrow">OURCHAT TOOLS</p><h2 id="manageTitle"></h2></div><button class="icon-btn" value="close" aria-label="Close">×</button></div>
+  <div class="dialog-head"><div><p class="eyebrow">கனவுரை</p><h2 id="manageTitle"></h2></div><button class="icon-btn" value="close" aria-label="Close">×</button></div>
   <div id="manageList" class="manage-list"></div>
   <div class="dialog-actions"><button class="secondary-btn" value="close">Close</button><button class="primary-btn" id="manageNew" type="button">＋ New</button></div>
 </form>`;
@@ -682,13 +605,9 @@ rewire('#settingsNav', openSettings);
 // ============================================================
 // 6) Small extras: reveal buttons when they are hidden, clear notifications and the app badge when the app is opened
 // ============================================================
-$('#messages').addEventListener('click', event => {
-  if (!document.body.classList.contains('hide-actions') || event.target.closest('button')) return;
-  const bubble = event.target.closest('.bubble');
-  if (bubble) bubble.classList.toggle('show-actions');
-});
 async function clearNotices() {
   try { if (navigator.clearAppBadge) navigator.clearAppBadge(); } catch { /* not supported */ }
+  try { const database = await openDb(); database.transaction('settings', 'readwrite').objectStore('settings').put(0, 'unread'); } catch { /* ignore */ }
   try {
     const registration = await navigator.serviceWorker.ready;
     (await registration.getNotifications({ tag: 'ourchat-message' })).forEach(n => n.close());
@@ -697,3 +616,170 @@ async function clearNotices() {
 document.addEventListener('visibilitychange', () => { if (api.me && document.visibilityState === 'visible') clearNotices(); });
 api.hooks.start.push(() => { clearNotices(); syncPushPrefs(); });
 syncPushPrefs();
+
+// ============================================================
+// 7) Top bar (app name + menu), reply by swiping right, long-press menu (reply / copy / delete)
+// ============================================================
+const barHost = document.querySelector('.chat-panel');
+const topBar = document.createElement('div');
+topBar.className = 'app-bar';
+topBar.innerHTML = '<span class="app-title">கனவுரை</span><button type="button" class="bar-btn" id="barMenu" aria-label="Menu">⋮</button>';
+if (barHost) barHost.insertBefore(topBar, chatBg.nextSibling);
+
+const appMenu = document.createElement('div');
+appMenu.id = 'appMenu';
+appMenu.hidden = true;
+document.body.appendChild(appMenu);
+function closeAppMenu() { appMenu.hidden = true; }
+function openAppMenu() {
+  const privacyOn = !!($('#privacyBtn') && $('#privacyBtn').classList.contains('on'));
+  const items = [
+    ['⚙', 'Settings', () => openSettings()],
+    ['⏰', 'Reminders', () => openManage('reminder')],
+    ['◷', 'Timer messages', () => openManage('timer')],
+    ['◈', privacyOn ? 'Privacy mode: on' : 'Privacy mode: off', () => { const b = $('#privacyBtn'); if (b) b.click(); }]
+  ];
+  if (!api.pushActive) items.push(['🔔', 'Turn on notifications', () => api.enablePush()]);
+  items.push(['🗑', 'Clear all messages', () => api.clearAll()]);
+  items.push(['⎋', 'Sign out', () => api.signOutUser()]);
+  appMenu.innerHTML = items.map((item, i) => `<button type="button" data-i="${i}"><i>${item[0]}</i><span>${esc(item[1])}</span></button>`).join('');
+  appMenu.onclick = event => {
+    const button = event.target.closest('button[data-i]');
+    if (!button) return;
+    closeAppMenu();
+    items[Number(button.dataset.i)][2]();
+  };
+  appMenu.hidden = false;
+}
+$('#barMenu').addEventListener('click', event => { event.stopPropagation(); if (appMenu.hidden) openAppMenu(); else closeAppMenu(); });
+document.addEventListener('pointerdown', event => { if (!appMenu.hidden && !event.target.closest('#appMenu') && !event.target.closest('#barMenu')) closeAppMenu(); }, true);
+document.addEventListener('keydown', event => { if (event.key === 'Escape') { closeAppMenu(); closeMsgMenu(); } });
+
+// reply bar above the message box
+const composerWrap = document.querySelector('.composer-wrap');
+const replyBar = document.createElement('div');
+replyBar.id = 'replyBar';
+replyBar.hidden = true;
+replyBar.innerHTML = '<div class="reply-line"></div><div class="reply-text"><b></b><span></span></div><button type="button" id="replyClose" aria-label="Cancel reply">×</button>';
+if (composerWrap) composerWrap.insertBefore(replyBar, $('#composer'));
+function renderReply() {
+  const reply = api.ui.reply;
+  replyBar.hidden = !reply;
+  if (!reply) return;
+  replyBar.querySelector('b').textContent = reply.from === api.me ? 'You' : prettyName(reply.from);
+  replyBar.querySelector('span').textContent = reply.text.length > 120 ? reply.text.slice(0, 120) + '…' : reply.text;
+}
+api.ui.onReplyChange = renderReply;
+function setReply(message) {
+  api.ui.reply = { id: message.id, text: message.text, from: message.senderEmail };
+  renderReply();
+  messageInput.focus();
+}
+$('#replyClose').addEventListener('click', () => { api.ui.reply = null; renderReply(); });
+api.hooks.stop.push(() => { api.ui.reply = null; renderReply(); closeMsgMenu(); closeAppMenu(); });
+
+// long-press menu: Reply, Copy, Delete
+const messageList = $('#messages');
+const msgMenu = document.createElement('div');
+msgMenu.id = 'msgMenu';
+msgMenu.hidden = true;
+document.body.appendChild(msgMenu);
+function closeMsgMenu() {
+  msgMenu.hidden = true;
+  document.querySelectorAll('.message-row.picked').forEach(row => row.classList.remove('picked'));
+}
+function openMsgMenu(row) {
+  const id = row.dataset.id;
+  if (!api.docs.some(m => m.id === id)) return;
+  document.querySelectorAll('.message-row.picked').forEach(r => r.classList.remove('picked'));
+  row.classList.add('picked');
+  msgMenu.dataset.id = id;
+  msgMenu.innerHTML = '<button type="button" data-do="reply"><i>↩</i><span>Reply</span></button><button type="button" data-do="copy"><i>⧉</i><span>Copy</span></button><button type="button" data-do="delete" class="danger"><i>🗑</i><span>Delete</span></button>';
+  msgMenu.hidden = false;
+  const rect = row.querySelector('.bubble').getBoundingClientRect();
+  const width = msgMenu.offsetWidth;
+  const height = msgMenu.offsetHeight;
+  const left = Math.min(Math.max(8, rect.left + rect.width / 2 - width / 2), window.innerWidth - width - 8);
+  let top = rect.top - height - 8;
+  if (top < 8) top = Math.min(rect.bottom + 8, window.innerHeight - height - 8);
+  msgMenu.style.left = `${left}px`;
+  msgMenu.style.top = `${top}px`;
+  if (navigator.vibrate) navigator.vibrate(20);
+}
+msgMenu.addEventListener('click', async event => {
+  const button = event.target.closest('button[data-do]');
+  if (!button) return;
+  const id = msgMenu.dataset.id;
+  const message = api.docs.find(m => m.id === id);
+  closeMsgMenu();
+  if (!message) return;
+  if (button.dataset.do === 'reply') setReply(message);
+  else if (button.dataset.do === 'copy') {
+    try { await navigator.clipboard.writeText(message.text); toast('Copied.'); } catch { toast('Could not copy.'); }
+  } else if (button.dataset.do === 'delete') api.deleteMessage(id);
+});
+document.addEventListener('pointerdown', event => { if (!msgMenu.hidden && !event.target.closest('#msgMenu')) closeMsgMenu(); }, true);
+messageList.addEventListener('scroll', closeMsgMenu);
+messageList.addEventListener('contextmenu', event => {
+  const row = event.target.closest('.message-row');
+  if (row && row.dataset.id) { event.preventDefault(); openMsgMenu(row); }
+});
+
+// swipe right on a message = reply; press and hold = menu
+let press = null;
+function releaseRow(row) {
+  row.classList.remove('reply-ready');
+  row.style.transition = 'transform .18s';
+  row.style.transform = '';
+  setTimeout(() => { row.style.transition = ''; }, 220);
+}
+function cancelPress() {
+  if (!press) return;
+  clearTimeout(press.timer);
+  releaseRow(press.row);
+  press = null;
+}
+messageList.addEventListener('pointerdown', event => {
+  if (event.button) return;
+  const row = event.target.closest('.message-row');
+  if (!row || !row.dataset.id || !event.target.closest('.bubble')) return;
+  press = {
+    row, x: event.clientX, y: event.clientY, moved: false,
+    timer: setTimeout(() => { if (!press) return; const target = press.row; releaseRow(target); press = null; openMsgMenu(target); }, 450)
+  };
+});
+messageList.addEventListener('pointermove', event => {
+  if (!press) return;
+  const dx = event.clientX - press.x;
+  const dy = event.clientY - press.y;
+  if (!press.moved && Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) { cancelPress(); return; }
+  if (Math.abs(dx) > 8) { press.moved = true; clearTimeout(press.timer); }
+  if (press.moved) {
+    press.row.style.transform = `translateX(${Math.max(0, Math.min(dx, 90))}px)`;
+    press.row.classList.toggle('reply-ready', dx > 60);
+  }
+});
+messageList.addEventListener('pointerup', event => {
+  if (!press) return;
+  const { row, moved } = press;
+  const dx = event.clientX - press.x;
+  clearTimeout(press.timer);
+  press = null;
+  releaseRow(row);
+  if (moved && dx > 60) {
+    const message = api.docs.find(m => m.id === row.dataset.id);
+    if (message) setReply(message);
+  }
+});
+messageList.addEventListener('pointercancel', cancelPress);
+
+// tap a quoted message to jump to the original
+messageList.addEventListener('click', event => {
+  const quote = event.target.closest('.reply-quote');
+  if (!quote) return;
+  const target = messageList.querySelector(`.message-row[data-id="${CSS.escape(quote.dataset.replyId)}"]`);
+  if (!target) { toast('The original message is gone.'); return; }
+  target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  target.classList.add('flash');
+  setTimeout(() => target.classList.remove('flash'), 1300);
+});

@@ -200,27 +200,7 @@ $('#newChatBtn').addEventListener('click', () => openDialog('newchat'));
 $('#audioCall').addEventListener('click', () => openDialog('call'));
 $('#videoCall').addEventListener('click', () => openDialog('call'));
 $('#learnExpiry').addEventListener('click', () => openDialog('expiry'));
-const headerMenu = $('#headerMenu');
-const detailsMenuBtn = $('#detailsBtn');
-function closeHeaderMenu() {
-  headerMenu.hidden = true;
-  detailsMenuBtn.setAttribute('aria-expanded', 'false');
-}
-detailsMenuBtn.addEventListener('click', (event) => {
-  event.stopPropagation();
-  const willOpen = headerMenu.hidden;
-  headerMenu.hidden = !willOpen;
-  detailsMenuBtn.setAttribute('aria-expanded', String(willOpen));
-});
-document.addEventListener('click', (event) => {
-  if (!event.target.closest('.header-menu-wrap')) closeHeaderMenu();
-});
-$('#chatDetailsMenu').addEventListener('click', () => {
-  closeHeaderMenu();
-  $('#detailsPanel').classList.toggle('open');
-});
-$('#remindersNav').addEventListener('click', closeHeaderMenu);
-$('#settingsNav').addEventListener('click', closeHeaderMenu);
+$('#detailsBtn').addEventListener('click', () => $('#detailsPanel').classList.toggle('open'));
 $('#closeDetails').addEventListener('click', () => $('#detailsPanel').classList.remove('open'));
 $('#remindersNav').addEventListener('click', () => {
   const reminders = loadReminders().sort((a, b) => a.at - b.at);
