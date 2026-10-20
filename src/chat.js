@@ -296,7 +296,7 @@ function render() {
     items.push({ ...m, mine: mineMsg, scheduled, at: new Date(m.visibleAtMs || m.created.getTime()) });
   }
   for (const [id, f] of failed) {
-    if (!lastDocs.some(m => m.id === id)) items.push({ id, text: f.text, senderEmail: me, mine: true, scheduled: false, failed: true, expiresAtMs: f.exp, at: new Date(f.vis || f.at) });
+    if (!lastDocs.some(m => m.id === id)) items.push({ id, text: f.text, senderEmail: me, mine: true, scheduled: false, failed: true, fwd: f.fwd, fwdFrom: f.fwdFrom, expiresAtMs: f.exp, at: new Date(f.vis || f.at) });
   }
   items.sort((a, b) => a.at - b.at);
   if (privacy) {
@@ -343,9 +343,9 @@ function render() {
       else status = '<span class="status pending">● Sent</span>';
     }
     const tint = !m.mine ? '' : m.failed ? ' st-fail' : m.scheduled ? '' : m.readAtMs ? ' st-read' : ' st-sent';
-    const fwd = `<button type="button" class="msg-fwd" data-id="${escapeHtml(m.id)}" title="Forward" aria-label="Forward message">↪</button>`;
+    const fwd = `<button type="button" class="msg-fwd" data-id="${escapeHtml(m.id)}" title="Forward in this chat" aria-label="Forward message in this chat">↪</button>`;
     const del = `<button type="button" class="msg-del" data-id="${escapeHtml(m.id)}" title="Delete" aria-label="Delete message">🗑</button>`;
-    row.innerHTML = `<div class="bubble${m.scheduled ? ' scheduled' : ''}${tint}"><p>${escapeHtml(m.text)}</p><div class="message-meta"><time>${escapeHtml(time)}</time>${status}${expiry}${fwd}${del}</div></div>`;
+    row.innerHTML = `<div class="bubble${m.scheduled ? ' scheduled' : ''}${tint}">${m.fwd ? `<span class="fwd-tag">↪ Forwarded${m.fwdFrom ? ' from ' + escapeHtml(prettyName(m.fwdFrom)) : ''}</span>` : ''}<p>${escapeHtml(m.text)}</p><div class="message-meta"><time>${escapeHtml(time)}</time>${status}${expiry}${fwd}${del}</div></div>`;
     messagesEl.appendChild(row);
   }
   if (api.ui.typing) {
@@ -373,15 +373,13 @@ function cleanupExpired() {
     });
   }
 }
-// Forward: opens the phone/PC share sheet (WhatsApp, Telegram, SMS ...). If sharing is not available, the text is copied.
+// Forward stays inside the chat: the message is sent again with a "Forwarded" label. Nothing is shared outside the app.
 async function forwardMessage(id) {
-  const found = lastDocs.find(m => m.id === id) || (failed.has(id) ? { text: failed.get(id).text } : null);
+  const found = lastDocs.find(m => m.id === id) || (failed.has(id) ? { text: failed.get(id).text, senderEmail: me } : null);
   if (!found || !found.text) return;
-  if (navigator.share) {
-    try { await navigator.share({ text: found.text }); return; } catch (error) { if (error && error.name === 'AbortError') return; }
-  }
-  try { await navigator.clipboard.writeText(found.text); toast('Message copied. Paste it where you want to forward it.'); }
-  catch { toast('Could not forward. Press and hold the text to copy it.'); }
+  if (!confirm('Forward this message in this chat?')) return;
+  send(found.text, { fwd: true, fwdFrom: found.senderEmail || me });
+  toast('Message forwarded in the chat.');
 }
 async function deleteMessage(id) {
   if (failed.has(id)) { failed.delete(id); render(); return; }
@@ -458,7 +456,10 @@ async function ensurePush(interactive) {
     if (!subscription) {
       subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes });
     }
-    await setDoc(doc(db, 'pushEndpoints', me), { endpoints: arrayUnion(subscription.endpoint), updatedAt: serverTimestamp() }, { merge: true });
+    const keys = (subscription.toJSON && subscription.toJSON().keys) || {};
+    const record = { endpoints: arrayUnion(subscription.endpoint), updatedAt: serverTimestamp() };
+    if (keys.p256dh && keys.auth) record.subs = arrayUnion({ endpoint: subscription.endpoint, p256dh: keys.p256dh, auth: keys.auth });
+    await setDoc(doc(db, 'pushEndpoints', me), record, { merge: true });
     const button = $('#notifyBtn');
     if (button) button.classList.add('hidden');
     api.pushActive = true;
@@ -487,17 +488,28 @@ function autoPush() {
   document.addEventListener('keydown', ask);
 }
 
-async function notifyOther(at) {
+// Sends a notification to the other person. With full subscriptions the notification shows the sender's name and the
+// message text (encrypted end to end by the Worker); scheduled messages only say "New message".
+async function notifyOther(at, text) {
   try {
     const snapshot = await getDoc(doc(db, 'pushEndpoints', other));
-    const endpoints = snapshot.exists() ? (snapshot.data().endpoints || []) : [];
-    if (!endpoints.length) return;
-    const payload = { endpoints };
+    const stored = snapshot.exists() ? snapshot.data() : {};
+    const subs = (stored.subs || []).slice(-6);
+    const endpoints = stored.endpoints || [];
+    if (!subs.length && !endpoints.length) return;
+    const payload = subs.length
+      ? { subs, payload: { t: prettyName(me), b: !at && text ? String(text).slice(0, 200) : 'New message' } }
+      : { endpoints };
     if (at) payload.at = at;
     const response = await fetch(WORKER_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
     const data = await response.json();
-    const dead = (data.result || []).filter(r => r.status === 404 || r.status === 410).map(r => r.endpoint);
-    if (dead.length) await setDoc(doc(db, 'pushEndpoints', other), { endpoints: arrayRemove(...dead) }, { merge: true });
+    const deadAddresses = (data.result || []).filter(r => r.status === 404 || r.status === 410).map(r => r.endpoint);
+    if (deadAddresses.length) {
+      const cleanup = { endpoints: arrayRemove(...deadAddresses) };
+      const deadSubs = subs.filter(s => deadAddresses.includes(s.endpoint));
+      if (deadSubs.length) cleanup.subs = arrayRemove(...deadSubs);
+      await setDoc(doc(db, 'pushEndpoints', other), cleanup, { merge: true });
+    }
   } catch (error) {
     console.warn('Push notify failed', error);
   }
@@ -514,12 +526,13 @@ async function send(text, opts = {}) {
   failed.delete(id);
   const payload = { text, senderEmail: me, createdAt: serverTimestamp(), expiresAtMs, expiresAt: Timestamp.fromMillis(expiresAtMs) };
   if (vis) payload.visibleAtMs = vis;
+  if (opts.fwd) { payload.fwd = true; payload.fwdFrom = opts.fwdFrom || me; }
   try {
     await setDoc(doc(db, 'messages', id), payload);
-    notifyOther(vis);
+    notifyOther(vis, text);
   } catch (error) {
     console.warn('Send failed', error);
-    failed.set(id, { text, exp: expiresAtMs, vis, at: Date.now() });
+    failed.set(id, { text, exp: expiresAtMs, vis, at: Date.now(), fwd: !!opts.fwd, fwdFrom: opts.fwdFrom || '' });
     render();
     toast(error && error.code === 'permission-denied' ? 'Not allowed by Firestore rules.' : 'Message not sent. Tap Retry.');
   }
@@ -529,7 +542,7 @@ messagesEl.addEventListener('click', event => {
   const retry = event.target.closest('.retry-btn');
   if (retry) {
     const f = failed.get(retry.dataset.id);
-    if (f) send(f.text, { id: retry.dataset.id, exp: f.exp, vis: f.vis });
+    if (f) send(f.text, { id: retry.dataset.id, exp: f.exp, vis: f.vis, fwd: f.fwd, fwdFrom: f.fwdFrom });
     return;
   }
   const fwd = event.target.closest('.msg-fwd');
@@ -552,7 +565,7 @@ function startChat(email) {
     lastDocs = snapshot.docs.map(d => {
       const data = d.data({ serverTimestamps: 'estimate' });
       const created = data.createdAt && data.createdAt.toDate ? data.createdAt.toDate() : new Date();
-      return { id: d.id, text: String(data.text || ''), senderEmail: data.senderEmail, created, visibleAtMs: Number(data.visibleAtMs) || 0, expiresAtMs: Number(data.expiresAtMs) || 0, readAtMs: Number(data.readAtMs) || 0, pending: d.metadata.hasPendingWrites };
+      return { id: d.id, text: String(data.text || ''), senderEmail: data.senderEmail, created, visibleAtMs: Number(data.visibleAtMs) || 0, expiresAtMs: Number(data.expiresAtMs) || 0, readAtMs: Number(data.readAtMs) || 0, fwd: !!data.fwd, fwdFrom: String(data.fwdFrom || ''), pending: d.metadata.hasPendingWrites };
     });
     render();
     cleanupExpired();

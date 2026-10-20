@@ -1,4 +1,5 @@
-// OurChat extras: online / typing, read receipts, look settings, timer-message manager, reminders that work when the app is closed.
+// OurChat extras: settings (colours, text size, background image, many options), in-app notification banner,
+// online / typing, read receipts, Timer-messages and Reminders managers, reminder engine.
 import { api, WORKER_URL } from './chat.js';
 import { doc, setDoc, updateDoc, deleteDoc, onSnapshot, writeBatch, serverTimestamp, Timestamp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
@@ -8,98 +9,354 @@ const toast = message => api.toast(message);
 const esc = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const fmt = ms => new Date(ms).toLocaleString([], { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
 const toLocalInput = d => { const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; };
+const prettyName = email => { const n = String(email || '').split('@')[0]; return n.charAt(0).toUpperCase() + n.slice(1); };
 
 // ============================================================
-// 1) Look settings: colours and text size (saved on this device)
+// 1) Settings (saved on this device only)
 // ============================================================
-const LOOK_KEY = 'ourchat.look.v1';
-const LOOK_DEFAULT = { fs: 100, bg: '#10111b', panel: '#171925', accent: '#b8a4ff', text: '#f4f4fb', incoming: '#25283a', mine: '#322d4e', read: '#3fb97f', sent: '#fbe9a1', fail: '#ffb3bb' };
+const SET_KEY = 'ourchat.settings.v2';
+const DEFAULTS = {
+  fs: 100, font: 'system', bold: false,
+  bg: '#10111b', panel: '#171925', accent: '#b8a4ff', text: '#f4f4fb', incoming: '#25283a', mine: '#322d4e', read: '#3fb97f', sent: '#fbe9a1', fail: '#ffb3bb',
+  bgDim: 45, bgBlur: 0,
+  radius: 16, gap: 13, maxw: 83,
+  showTime: true, showExpiry: true, showStatus: true, showActions: true,
+  banner: true, bannerAlways: true, bannerSeconds: 6, bannerPreview: true, pushPreview: true, sound: true, vibrate: true,
+  blockCopy: true, shareOnline: true, shareTyping: true, readReceipts: true
+};
+const RANGES = { fs: [80, 160], bgDim: [0, 85], bgBlur: [0, 20], radius: [0, 28], gap: [4, 28], maxw: [60, 95], bannerSeconds: [3, 15] };
+const FONTS = {
+  system: "Inter,'Segoe UI',Arial,sans-serif",
+  serif: "Georgia,'Times New Roman',serif",
+  mono: "ui-monospace,Consolas,'Courier New',monospace",
+  rounded: "'Trebuchet MS','Segoe UI',Arial,sans-serif"
+};
 const PRESETS = {
   Purple: { accent: '#b8a4ff', bg: '#10111b', panel: '#171925', incoming: '#25283a', mine: '#322d4e' },
   Green: { accent: '#80e4b0', bg: '#0e1714', panel: '#13201b', incoming: '#1f2e28', mine: '#203d35' },
   Blue: { accent: '#8dbaff', bg: '#0e1420', panel: '#141c2b', incoming: '#1f2a3d', mine: '#263652' },
   Rose: { accent: '#ff9ec7', bg: '#1a0f16', panel: '#24141d', incoming: '#34202c', mine: '#4a2538' }
 };
-const COLOR_FIELDS = [['accent', 'Accent'], ['bg', 'Background'], ['panel', 'Panels'], ['text', 'Text'], ['incoming', 'Their messages'], ['mine', 'My messages'], ['read', 'Read'], ['sent', 'Sent'], ['fail', 'Not sent']];
-const isHex = v => /^#[0-9a-f]{6}$/i.test(v);
+const isHex = v => typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v);
 
-function loadLook() {
+function loadSettings() {
   let saved = {};
-  try { saved = JSON.parse(localStorage.getItem(LOOK_KEY) || '{}'); } catch { saved = {}; }
-  const look = { ...LOOK_DEFAULT };
-  for (const key of Object.keys(LOOK_DEFAULT)) {
-    if (key === 'fs') { const n = Number(saved.fs); if (n >= 80 && n <= 150) look.fs = n; }
-    else if (isHex(saved[key])) look[key] = saved[key];
+  try { saved = JSON.parse(localStorage.getItem(SET_KEY) || 'null') || JSON.parse(localStorage.getItem('ourchat.look.v1') || '{}') || {}; } catch { saved = {}; }
+  const result = { ...DEFAULTS };
+  for (const key of Object.keys(DEFAULTS)) {
+    const fallback = DEFAULTS[key];
+    const value = saved[key];
+    if (typeof fallback === 'number') {
+      if (typeof value === 'number' && Number.isFinite(value)) { const [lo, hi] = RANGES[key] || [-Infinity, Infinity]; result[key] = Math.min(hi, Math.max(lo, value)); }
+    } else if (typeof fallback === 'boolean') {
+      if (typeof value === 'boolean') result[key] = value;
+    } else if (key === 'font') {
+      if (FONTS[value]) result[key] = value;
+    } else if (isHex(value)) result[key] = value;
   }
-  return look;
+  return result;
 }
-function saveLook(look) { try { localStorage.setItem(LOOK_KEY, JSON.stringify(look)); } catch { /* storage blocked */ } }
+function saveSettings() { try { localStorage.setItem(SET_KEY, JSON.stringify(S)); } catch { /* storage blocked */ } }
 function readableText(hex) {
   const n = parseInt(hex.slice(1), 16);
   const lum = (0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
   return lum > 0.6 ? '#15151c' : '#ffffff';
 }
-function applyLook(look) {
-  const s = document.body.style;
-  s.setProperty('--bg', look.bg);
-  s.setProperty('--panel-bg', look.panel);
-  s.setProperty('--accent', look.accent);
-  s.setProperty('--accent2', look.accent);
-  s.setProperty('--text', look.text);
-  s.setProperty('--bubble', look.incoming);
-  s.setProperty('--out', look.mine);
-  s.setProperty('--c-read', look.read);
-  s.setProperty('--c-sent', look.sent);
-  s.setProperty('--c-fail', look.fail);
-  s.setProperty('--t-read', readableText(look.read));
-  s.setProperty('--t-sent', readableText(look.sent));
-  s.setProperty('--t-fail', readableText(look.fail));
-  s.setProperty('--fs', String(look.fs / 100));
+let S = loadSettings();
+
+// chat background layer (image + blur + dim), placed behind the chat area
+const chatPanel = document.querySelector('.chat-panel');
+const chatBg = document.createElement('div');
+chatBg.id = 'chatBg';
+chatBg.innerHTML = '<div class="bg-img"></div><div class="bg-dim"></div>';
+if (chatPanel) chatPanel.insertBefore(chatBg, chatPanel.firstChild);
+let bgUrl = '';
+
+function applySettings() {
+  const st = document.body.style;
+  st.setProperty('--bg', S.bg);
+  st.setProperty('--panel-bg', S.panel);
+  st.setProperty('--accent', S.accent);
+  st.setProperty('--accent2', S.accent);
+  st.setProperty('--text', S.text);
+  st.setProperty('--bubble', S.incoming);
+  st.setProperty('--out', S.mine);
+  st.setProperty('--c-read', S.read);
+  st.setProperty('--c-sent', S.sent);
+  st.setProperty('--c-fail', S.fail);
+  st.setProperty('--t-read', readableText(S.read));
+  st.setProperty('--t-sent', readableText(S.sent));
+  st.setProperty('--t-fail', readableText(S.fail));
+  st.setProperty('--fs', String(S.fs / 100));
+  st.setProperty('--rad', `${S.radius}px`);
+  st.setProperty('--gap', `${S.gap}px`);
+  st.setProperty('--maxw', `${S.maxw}%`);
+  st.setProperty('--fw', S.bold ? '600' : '400');
+  st.fontFamily = FONTS[S.font];
+  const classes = document.body.classList;
+  classes.toggle('hide-time', !S.showTime);
+  classes.toggle('hide-expiry', !S.showExpiry);
+  classes.toggle('hide-status', !S.showStatus);
+  classes.toggle('hide-actions', !S.showActions);
+  classes.toggle('no-copy', S.blockCopy);
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute('content', look.bg);
+  if (meta) meta.setAttribute('content', S.bg);
+  const dim = chatBg.querySelector('.bg-dim');
+  const img = chatBg.querySelector('.bg-img');
+  if (dim) dim.style.background = `rgba(0,0,0,${S.bgDim / 100})`;
+  if (img) img.style.filter = S.bgBlur ? `blur(${S.bgBlur}px)` : 'none';
 }
-let look = loadLook();
-applyLook(look);
 
-const lookDialog = document.createElement('dialog');
-lookDialog.id = 'lookDialog';
-lookDialog.innerHTML = `<form method="dialog">
-  <div class="dialog-head"><div><p class="eyebrow">OURCHAT TOOLS</p><h2>App look</h2></div><button class="icon-btn" value="close" aria-label="Close">×</button></div>
-  <label class="field-label" for="lookFs">Text size: <b id="fsValue"></b></label>
-  <input type="range" id="lookFs" min="80" max="150" step="5" class="look-range">
-  <label class="field-label">Quick looks</label>
-  <div class="theme-options look-presets" id="lookPresets"></div>
-  <label class="field-label">Colours (tap a colour to change it)</label>
-  <div class="look-grid" id="lookGrid"></div>
-  <div class="dialog-actions"><button class="secondary-btn" id="lookReset" type="button">Reset all</button><button class="primary-btn" value="close">Done</button></div>
+// background image is stored in its own small IndexedDB
+const openLookDb = () => new Promise((resolve, reject) => {
+  const request = indexedDB.open('ourchat-look', 1);
+  request.onupgradeneeded = () => { request.result.createObjectStore('img'); };
+  request.onsuccess = () => resolve(request.result);
+  request.onerror = () => reject(request.error);
+});
+async function lookDbRun(mode, work) {
+  const database = await openLookDb();
+  return new Promise((resolve, reject) => {
+    const tx = database.transaction('img', mode);
+    const request = work(tx.objectStore('img'));
+    tx.oncomplete = () => resolve(request ? request.result : undefined);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+async function shrinkImage(file) {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  return new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.82));
+}
+function showBgBlob(blob) {
+  if (bgUrl) URL.revokeObjectURL(bgUrl);
+  bgUrl = blob ? URL.createObjectURL(blob) : '';
+  const img = chatBg.querySelector('.bg-img');
+  if (img) img.style.backgroundImage = bgUrl ? `url("${bgUrl}")` : 'none';
+  chatBg.classList.toggle('on', !!bgUrl);
+}
+async function restoreBackground() {
+  try { const blob = await lookDbRun('readonly', store => store.get('bg')); if (blob) showBgBlob(blob); } catch { /* no saved image */ }
+}
+applySettings();
+restoreBackground();
+
+// the settings window is built from this list
+const COLOR_ITEMS = [['accent', 'Accent'], ['bg', 'Background'], ['panel', 'Panels'], ['text', 'Text'], ['incoming', 'Their messages'], ['mine', 'My messages'], ['read', 'Read'], ['sent', 'Sent'], ['fail', 'Not sent']];
+const SECTIONS = [
+  { title: 'Text', items: [
+    { key: 'fs', type: 'range', label: 'Message text size', min: 80, max: 160, step: 5, unit: '%' },
+    { key: 'font', type: 'select', label: 'Font', options: [['system', 'Default'], ['serif', 'Serif'], ['mono', 'Typewriter'], ['rounded', 'Rounded']] },
+    { key: 'bold', type: 'toggle', label: 'Bold message text' }
+  ] },
+  { title: 'Colours', custom: 'colours' },
+  { title: 'Chat background image', custom: 'background' },
+  { title: 'Message boxes', items: [
+    { key: 'radius', type: 'range', label: 'Roundness', min: 0, max: 28, step: 1, unit: 'px' },
+    { key: 'gap', type: 'range', label: 'Space between messages', min: 4, max: 28, step: 1, unit: 'px' },
+    { key: 'maxw', type: 'range', label: 'Maximum width', min: 60, max: 95, step: 1, unit: '%' }
+  ] },
+  { title: 'Show or hide', items: [
+    { key: 'showTime', type: 'toggle', label: 'Message time' },
+    { key: 'showStatus', type: 'toggle', label: 'Status (Sent, Read ...)' },
+    { key: 'showExpiry', type: 'toggle', label: 'Disappear time label' },
+    { key: 'showActions', type: 'toggle', label: 'Forward and delete buttons' }
+  ] },
+  { title: 'Notifications', items: [
+    { key: 'banner', type: 'toggle', label: 'Notification banner inside the app' },
+    { key: 'bannerAlways', type: 'toggle', label: 'Show it even while the chat is open' },
+    { key: 'bannerSeconds', type: 'range', label: 'Banner stays for', min: 3, max: 15, step: 1, unit: ' s' },
+    { key: 'bannerPreview', type: 'toggle', label: 'Show message text in the banner' },
+    { key: 'pushPreview', type: 'toggle', label: 'Show message text in phone / PC notifications' },
+    { key: 'sound', type: 'toggle', label: 'Sound' },
+    { key: 'vibrate', type: 'toggle', label: 'Vibrate (phone)' },
+    { type: 'button', id: 'testBanner', label: 'Show a test banner' }
+  ] },
+  { title: 'Privacy', items: [
+    { key: 'blockCopy', type: 'toggle', label: 'Make message text hard to copy' },
+    { key: 'shareOnline', type: 'toggle', label: 'Let the other person see my online / last seen' },
+    { key: 'shareTyping', type: 'toggle', label: 'Let the other person see when I am typing' },
+    { key: 'readReceipts', type: 'toggle', label: 'Tell the other person when I read (turns messages green)' }
+  ] }
+];
+function controlHtml(item) {
+  if (item.type === 'range') return `<label class="set-row"><span>${esc(item.label)} <b data-val="${item.key}"></b></span><input type="range" data-key="${item.key}" min="${item.min}" max="${item.max}" step="${item.step}"></label>`;
+  if (item.type === 'toggle') return `<label class="set-row"><span>${esc(item.label)}</span><input type="checkbox" data-key="${item.key}"></label>`;
+  if (item.type === 'select') return `<label class="set-row"><span>${esc(item.label)}</span><select class="field-select set-select" data-key="${item.key}">${item.options.map(o => `<option value="${o[0]}">${esc(o[1])}</option>`).join('')}</select></label>`;
+  if (item.type === 'button') return `<div class="set-row"><span>${esc(item.label)}</span><button type="button" class="secondary-btn" id="${item.id}">Show</button></div>`;
+  return '';
+}
+function sectionHtml(section) {
+  let body = '';
+  if (section.custom === 'colours') {
+    body = `<div class="theme-options look-presets">${Object.keys(PRESETS).map(n => `<button type="button" class="theme-choice" data-preset="${n}"><span class="swatch" style="background:${PRESETS[n].accent}"></span>${n}</button>`).join('')}</div>
+      <div class="look-grid">${COLOR_ITEMS.map(([k, l]) => `<label class="look-field"><span>${l}</span><input type="color" data-key="${k}"></label>`).join('')}</div>`;
+  } else if (section.custom === 'background') {
+    body = `<div class="set-row"><span>Image</span><span class="set-actions"><button type="button" class="secondary-btn" id="bgChoose">Choose image</button><button type="button" class="secondary-btn danger" id="bgRemove">Remove</button></span></div>
+      <input type="file" id="bgFile" accept="image/*" hidden>
+      ${controlHtml({ key: 'bgDim', type: 'range', label: 'Darken image', min: 0, max: 85, step: 5, unit: '%' })}
+      ${controlHtml({ key: 'bgBlur', type: 'range', label: 'Blur image', min: 0, max: 20, step: 1, unit: 'px' })}`;
+  } else body = section.items.map(controlHtml).join('');
+  return `<details class="set-section"${section.title === 'Text' ? ' open' : ''}><summary>${esc(section.title)}</summary>${body}</details>`;
+}
+const settingsDialog = document.createElement('dialog');
+settingsDialog.id = 'settingsDialog';
+settingsDialog.innerHTML = `<form method="dialog">
+  <div class="dialog-head"><div><p class="eyebrow">OURCHAT</p><h2>Settings</h2></div><button class="icon-btn" value="close" aria-label="Close">×</button></div>
+  <p class="field-help">These settings are saved on this device. Open a section to change it.</p>
+  ${SECTIONS.map(sectionHtml).join('')}
+  <div class="dialog-actions"><button class="secondary-btn" id="settingsReset" type="button">Reset all</button><button class="primary-btn" value="close">Done</button></div>
 </form>`;
-document.body.appendChild(lookDialog);
+document.body.appendChild(settingsDialog);
 
-function syncLookDialog() {
-  $('#lookFs').value = String(look.fs);
-  $('#fsValue').textContent = `${look.fs}%`;
-  for (const [key] of COLOR_FIELDS) { const input = lookDialog.querySelector(`input[data-key="${key}"]`); if (input) input.value = look[key]; }
+function syncSettings() {
+  settingsDialog.querySelectorAll('[data-key]').forEach(input => {
+    const key = input.dataset.key;
+    if (input.type === 'checkbox') input.checked = !!S[key];
+    else input.value = String(S[key]);
+  });
+  const units = {};
+  SECTIONS.forEach(sec => (sec.items || []).forEach(it => { if (it.type === 'range') units[it.key] = it.unit; }));
+  units.bgDim = '%'; units.bgBlur = 'px';
+  settingsDialog.querySelectorAll('[data-val]').forEach(b => { b.textContent = `${S[b.dataset.val]}${units[b.dataset.val] || ''}`; });
 }
-$('#lookPresets').innerHTML = Object.keys(PRESETS).map(name => `<button type="button" class="theme-choice" data-preset="${name}"><span class="swatch" style="background:${PRESETS[name].accent}"></span>${name}</button>`).join('');
-$('#lookGrid').innerHTML = COLOR_FIELDS.map(([key, label]) => `<label class="look-field"><span>${label}</span><input type="color" data-key="${key}"></label>`).join('');
-lookDialog.addEventListener('input', event => {
-  const input = event.target;
-  if (input.id === 'lookFs') { look.fs = Number(input.value); $('#fsValue').textContent = `${look.fs}%`; }
-  else if (input.dataset && input.dataset.key && isHex(input.value)) look[input.dataset.key] = input.value;
+function onSettingChange(input) {
+  const key = input.dataset.key;
+  if (!key || !(key in DEFAULTS)) return;
+  if (input.type === 'checkbox') S[key] = input.checked;
+  else if (typeof DEFAULTS[key] === 'number') S[key] = Number(input.value);
+  else if (key === 'font') S[key] = FONTS[input.value] ? input.value : 'system';
+  else if (isHex(input.value)) S[key] = input.value;
   else return;
-  applyLook(look);
-  saveLook(look);
-});
-lookDialog.addEventListener('click', event => {
+  applySettings();
+  saveSettings();
+  syncSettings();
+  if (key === 'shareOnline') { if (S.shareOnline) beat(); else goOffline(true); }
+  syncPushPrefs();
+}
+settingsDialog.addEventListener('input', event => { if (event.target.dataset && event.target.dataset.key) onSettingChange(event.target); });
+settingsDialog.addEventListener('change', event => { if (event.target.dataset && event.target.dataset.key) onSettingChange(event.target); });
+settingsDialog.addEventListener('click', async event => {
   const preset = event.target.closest('[data-preset]');
-  if (preset) { look = { ...look, ...PRESETS[preset.dataset.preset] }; applyLook(look); saveLook(look); syncLookDialog(); }
+  if (preset) { S = { ...S, ...PRESETS[preset.dataset.preset] }; applySettings(); saveSettings(); syncSettings(); return; }
+  if (event.target.id === 'bgChoose') { $('#bgFile').click(); return; }
+  if (event.target.id === 'bgRemove') { try { await lookDbRun('readwrite', store => store.delete('bg')); } catch { /* ignore */ } showBgBlob(null); toast('Background removed.'); return; }
+  if (event.target.id === 'testBanner') { settingsDialog.close(); setTimeout(() => showBanner({ id: 'test', text: 'Hi! This is how a new message looks.', at: new Date() }, 1), 250); }
 });
-$('#lookReset').addEventListener('click', () => { look = { ...LOOK_DEFAULT }; applyLook(look); saveLook(look); syncLookDialog(); toast('Look reset.'); });
-function openLook() { syncLookDialog(); lookDialog.showModal(); }
+settingsDialog.addEventListener('change', async event => {
+  if (event.target.id !== 'bgFile') return;
+  const file = event.target.files && event.target.files[0];
+  event.target.value = '';
+  if (!file) return;
+  try {
+    const blob = await shrinkImage(file);
+    await lookDbRun('readwrite', store => store.put(blob, 'bg'));
+    showBgBlob(blob);
+    toast('Background set.');
+  } catch { toast('Could not use that image. Try a JPG or PNG.'); }
+});
+$('#settingsReset').addEventListener('click', async () => {
+  if (!confirm('Reset all settings (colours, text size, options)? Your background image stays.')) return;
+  S = { ...DEFAULTS };
+  applySettings(); saveSettings(); syncSettings();
+  toast('Settings reset.');
+});
+// the service worker reads this to decide whether a notification may show the message text
+async function syncPushPrefs() {
+  try {
+    const database = await openDb();
+    const tx = database.transaction('settings', 'readwrite');
+    tx.objectStore('settings').put({ showPreview: S.pushPreview }, 'prefs');
+  } catch { /* storage blocked */ }
+}
+function openSettings() { syncSettings(); settingsDialog.showModal(); }
+
+// make copying text hard (this cannot stop screenshots)
+$('#messages').addEventListener('contextmenu', event => { if (S.blockCopy && event.target.closest('.bubble')) event.preventDefault(); });
+document.addEventListener('copy', event => { if (S.blockCopy && event.target && event.target.closest && event.target.closest('.bubble')) event.preventDefault(); });
+
+// ============================================================
+// 1b) In-app notification banner (floating cards at the top)
+// ============================================================
+const bannerStack = document.createElement('div');
+bannerStack.id = 'bannerStack';
+document.body.appendChild(bannerStack);
+let unread = 0;
+let audioCtx = null;
+function beep() {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const now = audioCtx.currentTime;
+    [[880, 0], [1175, 0.12]].forEach(([freq, offset]) => {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, now + offset);
+      gain.gain.exponentialRampToValueAtTime(0.12, now + offset + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + offset + 0.18);
+      osc.connect(gain); gain.connect(audioCtx.destination);
+      osc.start(now + offset); osc.stop(now + offset + 0.2);
+    });
+  } catch { /* sound not available */ }
+}
+function removeCard(card) {
+  if (!card.parentNode) return;
+  card.classList.add('leaving');
+  setTimeout(() => card.remove(), 220);
+}
+function showBanner(m, count) {
+  if (!S.banner) return;
+  const name = prettyName(api.other || 'chat');
+  const card = document.createElement('button');
+  card.type = 'button';
+  card.className = 'banner-card';
+  const time = (m.at || new Date()).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const preview = S.bannerPreview ? (m.text.length > 90 ? m.text.slice(0, 90) + '…' : m.text) : 'New message';
+  card.innerHTML = `<div class="avatar pink banner-avatar">${esc(name.charAt(0))}</div>
+    <div class="banner-main"><strong>${esc(name)}</strong><span>${esc(preview)}</span></div>
+    <div class="banner-side"><time>${esc(time)}</time><i class="banner-badge">${count}</i></div>`;
+  bannerStack.insertBefore(card, bannerStack.firstChild);
+  while (bannerStack.children.length > 3) removeCard(bannerStack.lastChild);
+  const timer = setTimeout(() => removeCard(card), S.bannerSeconds * 1000);
+  card.addEventListener('click', () => {
+    clearTimeout(timer);
+    [...bannerStack.children].forEach(removeCard);
+    unread = 0;
+    const list = $('#messages');
+    list.scrollTop = list.scrollHeight;
+    messageInput.focus();
+  });
+  if (S.sound) beep();
+  if (S.vibrate && navigator.vibrate) navigator.vibrate([60, 40, 60]);
+}
+const seenMessages = new Set();
+let firstRender = true;
+function nearBottom() { const list = $('#messages'); return list.scrollHeight - list.scrollTop - list.clientHeight < 90; }
+api.hooks.start.push(() => { seenMessages.clear(); firstRender = true; unread = 0; });
+api.hooks.render.push(items => {
+  if (document.hasFocus() && nearBottom()) unread = 0;
+  for (const m of items) {
+    if (seenMessages.has(m.id)) continue;
+    seenMessages.add(m.id);
+    if (firstRender || m.mine || m.scheduled || m.failed) continue;
+    if (Date.now() - m.at.getTime() > 45000) continue; // old message loaded from the server, not a new one
+    unread += 1;
+    if (document.visibilityState !== 'visible') continue; // the system notification handles this case
+    const busy = document.hasFocus() && nearBottom() && !document.querySelector('dialog[open]');
+    if (S.bannerAlways || !busy) showBanner(m, unread);
+  }
+  if (items.length) firstRender = false;
+});
 
 // ============================================================
 // 2) Online status, typing, read receipts
 // ============================================================
+const messageInput = $('#messageInput');
 let presenceTimer = 0;
 let typingTick = 0;
 let unsubPresence = null;
@@ -110,11 +367,11 @@ const presenceRef = () => doc(db, 'presence', api.me);
 const tsMs = value => (value && typeof value.toMillis === 'function' ? value.toMillis() : 0);
 
 function beat() {
-  if (!api.me) return;
+  if (!api.me || !S.shareOnline) return;
   setDoc(presenceRef(), { online: document.visibilityState === 'visible', lastSeen: serverTimestamp() }, { merge: true }).catch(() => {});
 }
-function goOffline() {
-  if (!api.me) return;
+function goOffline(force) {
+  if (!api.me || (!S.shareOnline && !force)) return;
   setDoc(presenceRef(), { online: false, lastSeen: serverTimestamp(), typingAt: null }, { merge: true }).catch(() => {});
 }
 function seenLabel(ms) {
@@ -170,9 +427,8 @@ api.hooks.stop.push(stopPresence);
 document.addEventListener('visibilitychange', () => { if (!api.me) return; if (document.visibilityState === 'visible') beat(); else goOffline(); });
 window.addEventListener('pagehide', goOffline);
 
-const messageInput = $('#messageInput');
 messageInput.addEventListener('input', () => {
-  if (!api.me) return;
+  if (!api.me || !S.shareTyping || !S.shareOnline) return;
   const has = messageInput.value.trim().length > 0;
   const now = Date.now();
   if (has && now - lastTypingSent > 2500) {
@@ -191,7 +447,7 @@ $('#composer').addEventListener('submit', () => {
 
 // Read receipts: a message the other person sent is marked read when it is on screen and the app is in front.
 api.hooks.render.push(items => {
-  if (document.visibilityState !== 'visible' || !document.hasFocus()) return;
+  if (!S.readReceipts || document.visibilityState !== 'visible' || !document.hasFocus()) return;
   const ids = items.filter(m => !m.mine && !m.scheduled && !m.failed && !m.readAtMs && !m.pending && !markingRead.has(m.id)).map(m => m.id);
   if (!ids.length) return;
   const batch = writeBatch(db);
@@ -205,8 +461,11 @@ window.addEventListener('focus', () => { if (api.me) api.render(); });
 // ============================================================
 function openDb() {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open('ourchat', 1);
-    request.onupgradeneeded = () => { request.result.createObjectStore('reminders', { keyPath: 'id' }); };
+    const request = indexedDB.open('ourchat', 2);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains('reminders')) request.result.createObjectStore('reminders', { keyPath: 'id' });
+      if (!request.result.objectStoreNames.contains('settings')) request.result.createObjectStore('settings');
+    };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });
@@ -417,5 +676,24 @@ rewire('#detailTimer', () => openManage('timer'), 'Timer messages');
 rewire('#detailReminder', () => openManage('reminder'), 'Reminders');
 rewire('#reminderBtn', () => newReminderDialog(null));
 rewire('#remindersNav', () => openManage('reminder'));
-rewire('#appearanceBtn', openLook, 'Colours and text size');
-rewire('#settingsNav', openLook);
+rewire('#appearanceBtn', openSettings, 'Settings');
+rewire('#settingsNav', openSettings);
+
+// ============================================================
+// 6) Small extras: reveal buttons when they are hidden, clear notifications and the app badge when the app is opened
+// ============================================================
+$('#messages').addEventListener('click', event => {
+  if (!document.body.classList.contains('hide-actions') || event.target.closest('button')) return;
+  const bubble = event.target.closest('.bubble');
+  if (bubble) bubble.classList.toggle('show-actions');
+});
+async function clearNotices() {
+  try { if (navigator.clearAppBadge) navigator.clearAppBadge(); } catch { /* not supported */ }
+  try {
+    const registration = await navigator.serviceWorker.ready;
+    (await registration.getNotifications({ tag: 'ourchat-message' })).forEach(n => n.close());
+  } catch { /* ignore */ }
+}
+document.addEventListener('visibilitychange', () => { if (api.me && document.visibilityState === 'visible') clearNotices(); });
+api.hooks.start.push(() => { clearNotices(); syncPushPrefs(); });
+syncPushPrefs();

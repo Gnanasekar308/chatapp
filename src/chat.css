@@ -74,3 +74,53 @@
 
 .msg-fwd{background:transparent;border:0;font-size:11px;opacity:.55;padding:0 3px;line-height:1;color:inherit}
 .msg-fwd:hover{opacity:1}
+
+/* ===== v10: settings variables, background image, banner cards, forwarded tag, hide/show options ===== */
+.bubble{border-radius:5px var(--rad,16px) var(--rad,16px) var(--rad,16px)}
+.outgoing .bubble{border-radius:var(--rad,16px) 5px var(--rad,16px) var(--rad,16px)}
+.bubble p{font-weight:var(--fw,400)}
+.messages{gap:var(--gap,13px)}
+.message-row{max-width:var(--maxw,83%)}
+.fwd-tag{display:block;font-size:9px;font-style:italic;opacity:.75;margin-bottom:5px}
+.hide-time .message-meta time{display:none}
+.hide-expiry .expiry{display:none}
+.hide-status .status{display:none}
+.hide-actions .msg-del,.hide-actions .msg-fwd{display:none}
+.hide-actions .bubble.show-actions .msg-del,.hide-actions .bubble.show-actions .msg-fwd{display:inline}
+.no-copy .bubble{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+
+/* chat background image (behind the header, messages and message box) */
+#chatBg{position:absolute;inset:0;z-index:0;display:none;pointer-events:none;overflow:hidden}
+#chatBg.on{display:block}
+#chatBg .bg-img{position:absolute;inset:-24px;background-size:cover;background-position:center}
+#chatBg .bg-dim{position:absolute;inset:0}
+.chat-panel>*:not(#chatBg){position:relative;z-index:1}
+#chatBg.on~.chat-header{background:rgba(14,15,24,.55);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+#chatBg.on~.security-banner{background:rgba(30,28,48,.7)}
+
+/* notification banner cards (like a heads-up notification) */
+#bannerStack{position:fixed;top:calc(env(safe-area-inset-top,0px) + 10px);left:50%;transform:translateX(-50%);width:min(440px,calc(100vw - 20px));display:flex;flex-direction:column;gap:8px;z-index:120;pointer-events:none}
+.banner-card{pointer-events:auto;display:flex;align-items:center;gap:12px;width:100%;text-align:left;padding:10px 12px;border-radius:20px;border:1px solid rgba(255,255,255,.09);background:rgba(20,21,30,.97);box-shadow:0 14px 40px rgba(0,0,0,.55);color:var(--text);animation:bannerIn .28s ease-out;cursor:pointer}
+.banner-card.leaving{opacity:0;transform:translateY(-12px);transition:.2s}
+.banner-avatar{width:46px;height:46px;border-radius:50%;font-size:16px}
+.banner-main{min-width:0;flex:1;display:flex;flex-direction:column;gap:3px}
+.banner-main strong{font-size:14px;font-weight:700}
+.banner-main span{font-size:12px;color:#b9bdd0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.banner-side{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0}
+.banner-side time{font-size:10px;color:#8c91a9}
+.banner-badge{min-width:22px;height:22px;padding:0 6px;border-radius:11px;background:var(--accent);color:#14151e;font:700 11px Inter,'Segoe UI',sans-serif;font-style:normal;display:grid;place-items:center}
+@keyframes bannerIn{from{opacity:0;transform:translateY(-16px) scale(.97)}to{opacity:1;transform:none}}
+
+/* settings window */
+#settingsDialog{max-height:90vh;overflow:auto}
+.set-section{border:1px solid #34364b;border-radius:12px;margin:10px 0;background:#202233}
+.set-section summary{cursor:pointer;padding:12px 14px;font-weight:600;font-size:12px}
+.set-section[open] summary{border-bottom:1px solid #34364b}
+.set-section>.look-presets,.set-section>.look-grid{margin:12px 14px}
+.set-row{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:11px;color:#c6c9d8;margin:10px 14px}
+.set-row span b{color:var(--accent);font-weight:600;margin-left:4px}
+.set-row input[type=range]{width:45%;accent-color:var(--accent)}
+.set-row input[type=checkbox]{width:18px;height:18px;accent-color:var(--accent)}
+.set-select{width:50%;padding:8px}
+.set-actions{display:flex;gap:6px}
+.set-actions .secondary-btn{padding:7px 10px;font-size:10px}

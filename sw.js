@@ -1,5 +1,5 @@
 'use strict';
-const CACHE = 'ourchat-shell-v8';
+const CACHE = 'ourchat-shell-v9';
 const ASSETS = [
   './', './index.html', './src/styles.css', './src/chat.css', './src/app.js', './src/chat.js', './src/extras.js', './src/firebase.js',
   './manifest.webmanifest', './assets/icon-192.png', './assets/icon-512.png'
@@ -45,8 +45,11 @@ self.addEventListener('fetch', event => {
 // Reminders are stored on the device in IndexedDB (written by src/extras.js).
 function openReminderDb() {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open('ourchat', 1);
-    request.onupgradeneeded = () => { request.result.createObjectStore('reminders', { keyPath: 'id' }); };
+    const request = indexedDB.open('ourchat', 2);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains('reminders')) request.result.createObjectStore('reminders', { keyPath: 'id' });
+      if (!request.result.objectStoreNames.contains('settings')) request.result.createObjectStore('settings');
+    };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });
@@ -69,36 +72,66 @@ async function markReminderDone(reminder) {
   });
 }
 
-// Push: the Worker sends an empty signal. If a reminder on this device is due, show it; otherwise show a generic
-// "new message" notification (no message text leaves the app).
+async function readPrefs() {
+  try {
+    const database = await openReminderDb();
+    return await new Promise((resolve, reject) => {
+      const query = database.transaction('settings').objectStore('settings').get('prefs');
+      query.onsuccess = () => resolve(query.result || {});
+      query.onerror = () => reject(query.error);
+    });
+  } catch (error) { return {}; }
+}
+async function appIsInFront() {
+  const list = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+  return list.some(client => client.visibilityState === 'visible' && client.focused);
+}
+function setBadge(count) {
+  try { if (self.navigator && self.navigator.setAppBadge) self.navigator.setAppBadge(count).catch(() => {}); } catch (error) { /* not supported */ }
+}
+
+// Push. Two kinds:
+//  1) with data {t: sender name, b: message text}: show "Name" + text (the text can be hidden with a setting on this device).
+//     Several messages become "Name (3)". Nothing is shown while the app itself is open in front.
+//  2) empty: a reminder on this device if one is due, otherwise a generic "new message" notification.
 self.addEventListener('push', event => {
   event.waitUntil((async () => {
+    let data = null;
+    try { data = event.data ? event.data.json() : null; } catch (error) { data = null; }
+    const icons = { icon: './assets/icon-192.png', badge: './assets/icon-192.png' };
+
+    if (data && data.t) {
+      if (await appIsInFront()) return;
+      const prefs = await readPrefs();
+      const previous = await self.registration.getNotifications({ tag: 'ourchat-message' });
+      const count = ((previous[0] && previous[0].data && previous[0].data.count) || 0) + 1;
+      await self.registration.showNotification(count > 1 ? data.t + ' (' + count + ')' : data.t, {
+        body: prefs.showPreview === false ? 'New message' : String(data.b || 'New message'),
+        tag: 'ourchat-message',
+        renotify: true,
+        data: { count },
+        ...icons
+      });
+      setBadge(count);
+      return;
+    }
+
     let due = [];
     try { due = (await readReminders()).filter(r => !r.done && r.at <= Date.now() + 30000); } catch (error) { due = []; }
     if (due.length) {
       for (const reminder of due) {
-        await self.registration.showNotification('⏰ OurChat reminder', {
-          body: reminder.text,
-          icon: './assets/icon-192.png',
-          badge: './assets/icon-192.png',
-          tag: 'reminder-' + reminder.id,
-          requireInteraction: true
-        });
+        await self.registration.showNotification('⏰ OurChat reminder', { body: reminder.text, tag: 'reminder-' + reminder.id, requireInteraction: true, ...icons });
         try { await markReminderDone(reminder); } catch (error) { /* ignore */ }
       }
       return;
     }
-    await self.registration.showNotification('OurChat', {
-      body: 'You have a new message',
-      icon: './assets/icon-192.png',
-      badge: './assets/icon-192.png',
-      tag: 'ourchat-message',
-      renotify: true
-    });
+    if (await appIsInFront()) return;
+    await self.registration.showNotification('OurChat', { body: 'You have a new message', tag: 'ourchat-message', renotify: true, ...icons });
   })());
 });
 self.addEventListener('notificationclick', event => {
   event.notification.close();
+  try { if (self.navigator && self.navigator.clearAppBadge) self.navigator.clearAppBadge(); } catch (error) { /* ignore */ }
   event.waitUntil((async () => {
     const list = await clients.matchAll({ type: 'window', includeUncontrolled: true });
     for (const client of list) { if ('focus' in client) return client.focus(); }
