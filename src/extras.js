@@ -176,6 +176,7 @@ const SECTIONS = [
     { key: 'pushPreview', type: 'toggle', label: 'Show the message text in notifications (off = only "New message")' },
     { type: 'button', id: 'turnOnNotifications', label: 'Turn on notifications on this device' }
   ] },
+  { title: 'App lock (fingerprint)', items: [ { type: 'lock' } ] },
   { title: 'Privacy', items: [
     { key: 'blockCopy', type: 'toggle', label: 'Make message text hard to copy' },
     { key: 'shareOnline', type: 'toggle', label: 'Let the other person see my online / last seen' },
@@ -187,6 +188,10 @@ function controlHtml(item) {
   if (item.type === 'range') return `<label class="set-row"><span>${esc(item.label)} <b data-val="${item.key}"></b></span><input type="range" data-key="${item.key}" min="${item.min}" max="${item.max}" step="${item.step}"></label>`;
   if (item.type === 'toggle') return `<label class="set-row"><span>${esc(item.label)}</span><input type="checkbox" data-key="${item.key}"></label>`;
   if (item.type === 'select') return `<label class="set-row"><span>${esc(item.label)}</span><select class="field-select set-select" data-key="${item.key}">${item.options.map(o => `<option value="${o[0]}">${esc(o[1])}</option>`).join('')}</select></label>`;
+  if (item.type === 'lock') return `<div class="set-row"><span id="lockStatus">App lock is off</span><button type="button" class="secondary-btn" id="lockToggle">Turn on</button></div>
+    <label class="set-row"><span>Lock after I leave the app</span><select id="lockDelay" class="field-select set-select"><option value="0">Immediately</option><option value="1">After 1 minute</option><option value="5">After 5 minutes</option><option value="15">After 15 minutes</option></select></label>
+    <div class="set-row"><span>Lock the app right now</span><button type="button" class="secondary-btn" id="lockNow">Lock now</button></div>
+    <p class="field-help set-note">Uses this phone's fingerprint (or its screen lock). Your fingerprint never leaves the phone. The lock works on this device only.</p>`;
   if (item.type === 'button') return `<div class="set-row"><span>${esc(item.label)}</span><button type="button" class="secondary-btn" id="${item.id}">Turn on</button></div>`;
   return '';
 }
@@ -213,7 +218,30 @@ settingsDialog.innerHTML = `<form method="dialog">
 </form>`;
 document.body.appendChild(settingsDialog);
 
+function refreshLockUi() {
+  const lock = window.OurLock;
+  const status = $('#lockStatus');
+  if (!status) return;
+  const on = !!(lock && lock.enabled());
+  status.textContent = !lock || !lock.supported() ? 'App lock is not available in this browser' : on ? 'App lock is ON' : 'App lock is off';
+  $('#lockToggle').textContent = on ? 'Turn off' : 'Turn on';
+  $('#lockDelay').value = String(lock ? lock.delay() : 0);
+  $('#lockNow').disabled = !on;
+}
+async function toggleLock() {
+  const lock = window.OurLock;
+  if (!lock) return;
+  try {
+    if (lock.enabled()) { await lock.disable(); toast('App lock turned off.'); }
+    else { await lock.enable(Number($('#lockDelay').value) || 0); toast('App lock is on. Next time you open கனவுரை it asks for your fingerprint.'); }
+  } catch (error) {
+    toast(error && error.message === 'not-available' ? 'No fingerprint or screen lock is set up on this phone (or the browser cannot use it).' : 'Not done. Try again.');
+  }
+  refreshLockUi();
+}
+settingsDialog.addEventListener('change', event => { if (event.target.id === 'lockDelay' && window.OurLock) window.OurLock.setDelay(Number(event.target.value)); });
 function syncSettings() {
+  refreshLockUi();
   settingsDialog.querySelectorAll('[data-key]').forEach(input => {
     const key = input.dataset.key;
     if (input.type === 'checkbox') input.checked = !!S[key];
@@ -244,6 +272,8 @@ settingsDialog.addEventListener('click', async event => {
   const preset = event.target.closest('[data-preset]');
   if (preset) { S = { ...S, ...PRESETS[preset.dataset.preset] }; applySettings(); saveSettings(); syncSettings(); return; }
   if (event.target.id === 'turnOnNotifications') { api.enablePush(); return; }
+  if (event.target.id === 'lockToggle') { toggleLock(); return; }
+  if (event.target.id === 'lockNow') { settingsDialog.close(); if (window.OurLock) window.OurLock.lockNow(); return; }
   if (event.target.id === 'bgChoose') { $('#bgFile').click(); return; }
   if (event.target.id === 'bgRemove') { try { await lookDbRun('readwrite', store => store.delete('bg')); } catch { /* ignore */ } showBgBlob(null); toast('Background removed.'); return; }
 });
@@ -641,6 +671,7 @@ function openAppMenu() {
     ['◷', 'Timer messages', () => openManage('timer')],
     ['◈', privacyOn ? 'Privacy mode: on' : 'Privacy mode: off', () => { const b = $('#privacyBtn'); if (b) b.click(); }]
   ];
+  if (window.OurLock && window.OurLock.enabled()) items.push(['🔒', 'Lock now', () => window.OurLock.lockNow()]);
   if (!api.pushActive) items.push(['🔔', 'Turn on notifications', () => api.enablePush()]);
   items.push(['🗑', 'Clear all messages', () => api.clearAll()]);
   items.push(['⎋', 'Sign out', () => api.signOutUser()]);
