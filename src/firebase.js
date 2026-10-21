@@ -18,7 +18,7 @@ export const auth = getAuth(app);
 let database;
 try {
   // Offline cache: messages written without internet stay queued (yellow) and send later.
-  database = initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) });
+  database = initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }), experimentalAutoDetectLongPolling: true });
 } catch (error) {
   console.warn('Offline cache unavailable, using default Firestore.', error);
   database = getFirestore(app);

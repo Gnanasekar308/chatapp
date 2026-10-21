@@ -1,5 +1,5 @@
 'use strict';
-const CACHE = 'ourchat-shell-v10';
+const CACHE = 'ourchat-shell-v11';
 const ASSETS = [
   './', './index.html', './src/styles.css', './src/chat.css', './src/app.js', './src/chat.js', './src/extras.js', './src/firebase.js',
   './manifest.webmanifest', './assets/icon-192.png', './assets/icon-512.png'
@@ -116,7 +116,7 @@ self.addEventListener('push', event => {
       const count = (Number(await readPref('unread')) || 0) + 1;
       try { await writePref('unread', count); } catch (error) { /* ignore */ }
       await self.registration.showNotification(count > 1 ? data.t + ' (' + count + ' messages)' : data.t, {
-        body: prefs.showPreview === false ? 'New message' : String(data.b || 'New message'),
+        body: prefs.showPreview === true ? String(data.b || 'New message') : (count > 1 ? count + ' new messages' : 'New message'),
         tag: 'ourchat-message',
         renotify: true,
         data: { count },
@@ -144,7 +144,9 @@ self.addEventListener('notificationclick', event => {
   try { if (self.navigator && self.navigator.clearAppBadge) self.navigator.clearAppBadge(); } catch (error) { /* ignore */ }
   event.waitUntil((async () => {
     const list = await clients.matchAll({ type: 'window', includeUncontrolled: true });
-    for (const client of list) { if ('focus' in client) return client.focus(); }
+    for (const client of list) {
+      if ('focus' in client) { try { client.postMessage({ type: 'refresh' }); } catch (error) { /* ignore */ } return client.focus(); }
+    }
     return clients.openWindow('./');
   })());
 });

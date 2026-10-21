@@ -7,21 +7,21 @@ const $ = selector => document.querySelector(selector);
 const db = api.db;
 const toast = message => api.toast(message);
 const esc = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-const fmt = ms => new Date(ms).toLocaleString([], { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+const fmt = ms => new Date(ms).toLocaleString([], { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: api.ui.hour12 });
 const toLocalInput = d => { const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; };
 const prettyName = email => { const n = String(email || '').split('@')[0]; return n.charAt(0).toUpperCase() + n.slice(1); };
 
 // ============================================================
 // 1) Settings (saved on this device only)
 // ============================================================
-const SET_KEY = 'ourchat.settings.v3';
+const SET_KEY = 'ourchat.settings.v4';
 const DEFAULTS = {
   fs: 100, font: 'system', bold: false,
   bg: '#10111b', panel: '#171925', accent: '#b8a4ff', text: '#f4f4fb', incoming: '#25283a', mine: '#322d4e', read: '#3fb97f', sent: '#fbe9a1', fail: '#ffb3bb',
   bgDim: 45, bgBlur: 0,
   radius: 16, gap: 13, maxw: 83,
   showTime: true, showExpiry: false, showStatus: false,
-  pushPreview: true,
+  pushPreview: false, hour12: true,
   blockCopy: true, shareOnline: true, shareTyping: true, readReceipts: true
 };
 const RANGES = { fs: [80, 160], bgDim: [0, 85], bgBlur: [0, 20], radius: [0, 28], gap: [4, 28], maxw: [60, 95] };
@@ -44,8 +44,8 @@ function loadSettings() {
   try {
     saved = JSON.parse(localStorage.getItem(SET_KEY) || 'null');
     if (!saved) { // first run of this version: keep the old colours, but start with the clean message boxes
-      saved = JSON.parse(localStorage.getItem('ourchat.settings.v2') || localStorage.getItem('ourchat.look.v1') || '{}') || {};
-      delete saved.showStatus; delete saved.showExpiry; delete saved.showActions;
+      saved = JSON.parse(localStorage.getItem('ourchat.settings.v3') || localStorage.getItem('ourchat.settings.v2') || localStorage.getItem('ourchat.look.v1') || '{}') || {};
+      delete saved.showStatus; delete saved.showExpiry; delete saved.showActions; delete saved.pushPreview; // notifications start without the message text
     }
   } catch { saved = {}; }
   const result = { ...DEFAULTS };
@@ -104,6 +104,7 @@ function applySettings() {
   classes.toggle('hide-expiry', !S.showExpiry);
   classes.toggle('hide-status', !S.showStatus);
   classes.toggle('no-copy', S.blockCopy);
+  if (api.ui.hour12 !== S.hour12) { api.ui.hour12 = S.hour12; if (api.me) api.render(); }
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.setAttribute('content', S.bg);
   const dim = chatBg.querySelector('.bg-dim');
@@ -167,11 +168,12 @@ const SECTIONS = [
   ] },
   { title: 'Show or hide', items: [
     { key: 'showTime', type: 'toggle', label: 'Message time' },
+    { key: 'hour12', type: 'toggle', label: '12-hour time (AM/PM). Off = 24-hour' },
     { key: 'showStatus', type: 'toggle', label: 'Status words (Sent, Read ...)' },
     { key: 'showExpiry', type: 'toggle', label: 'Disappear time label' }
   ] },
   { title: 'Notifications', items: [
-    { key: 'pushPreview', type: 'toggle', label: 'Show message text in phone / PC notifications' },
+    { key: 'pushPreview', type: 'toggle', label: 'Show the message text in notifications (off = only "New message")' },
     { type: 'button', id: 'turnOnNotifications', label: 'Turn on notifications on this device' }
   ] },
   { title: 'Privacy', items: [
@@ -299,7 +301,7 @@ function goOffline(force) {
 }
 function seenLabel(ms) {
   const d = new Date(ms);
-  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: api.ui.hour12 });
   const now = new Date();
   if (d.toDateString() === now.toDateString()) return `today ${time}`;
   if (d.toDateString() === new Date(Date.now() - 86400000).toDateString()) return `yesterday ${time}`;

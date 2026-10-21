@@ -170,3 +170,11 @@
 #settingsDialog form{padding:16px}
 #settingsDialog .set-section{background:rgba(32,34,51,.5)}
 @media(max-width:760px){#settingsDialog{top:auto;left:8px;right:8px;bottom:8px;width:auto;height:fit-content;max-height:50vh}}
+
+/* ===== v12: fit the visible screen (keyboard!), no pinch zoom, no scrolling of the whole page ===== */
+html,body{touch-action:pan-x pan-y;overscroll-behavior:none}
+html{height:100%}
+body{position:fixed;top:0;left:0;width:100%;height:var(--app-h,100dvh);min-height:0!important;overflow:hidden}
+.app-shell{height:var(--app-h,100dvh)!important;min-height:0!important}
+input,textarea{font-size:16px} /* phones zoom in when a field has a smaller font */
+.composer textarea{font-size:max(16px,calc(12px*var(--fs,1)))}

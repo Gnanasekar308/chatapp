@@ -1,12 +1,38 @@
 // கனவுரை (OurChat) live chat: login, real-time messages, push, scheduled messages, delete, privacy mode.
 import { auth, db } from './firebase.js';
 import { signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
-import { collection, doc, setDoc, getDoc, getDocs, deleteDoc, writeBatch, arrayUnion, arrayRemove, Timestamp, query, orderBy, limit, onSnapshot, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+import { collection, doc, setDoc, getDoc, getDocs, getDocsFromServer, disableNetwork, enableNetwork, deleteDoc, writeBatch, arrayUnion, arrayRemove, Timestamp, query, orderBy, limit, onSnapshot, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
 const ALLOWED = ['gnanasekar308@gmail.com', 'venkathu0637@gmail.com'];
 export const WORKER_URL = 'https://ourchat-push.gnanasekar308.workers.dev/';
 const $ = selector => document.querySelector(selector);
 const messagesEl = $('#messages');
+
+// ---------- splash screen: a steady logo until the sign-in state is known (no login-page flash) ----------
+function hideSplash() {
+  const splash = document.getElementById('splash');
+  if (!splash) return;
+  splash.classList.add('out');
+  setTimeout(() => splash.remove(), 350);
+}
+setTimeout(hideSplash, 5000);
+
+// ---------- keep the app exactly as tall as the visible screen (keyboard open: the top bar stays in view) ----------
+function fitViewport() {
+  const vv = window.visualViewport;
+  document.documentElement.style.setProperty('--app-h', `${Math.round(vv ? vv.height : window.innerHeight)}px`);
+  window.scrollTo(0, 0);
+}
+fitViewport();
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', () => {
+    fitViewport();
+    if (document.activeElement && document.activeElement.id === 'messageInput') setTimeout(() => { messagesEl.scrollTop = messagesEl.scrollHeight; }, 60);
+  });
+  window.visualViewport.addEventListener('scroll', fitViewport);
+}
+window.addEventListener('resize', fitViewport);
+document.addEventListener('gesturestart', event => event.preventDefault()); // no pinch zoom (iPhone)
 
 // ---------- app-only mode: the chat opens only in the installed app (like WhatsApp), not in a normal browser tab ----------
 const IS_APP =
@@ -69,7 +95,7 @@ const deleting = new Set();
 
 // Small bridge so src/extras.js (presence, typing, read receipts, look settings, managers) can use this module's state.
 export const api = {
-  ui: { typing: false, reply: null, onReplyChange: null },
+  ui: { typing: false, reply: null, onReplyChange: null, hour12: true },
   pushActive: false,
   hooks: { start: [], stop: [], render: [] },
   get me() { return me; },
@@ -134,6 +160,7 @@ function toLocalInput(d) {
 // ---------- login screen ----------
 const overlay = document.createElement('div');
 overlay.id = 'loginOverlay';
+overlay.className = 'hidden';
 overlay.innerHTML = `<form class="login-card" id="loginForm">
   <p class="eyebrow">கனவுரை</p><h2>Sign in</h2><p class="login-sub">Private space for two people.</p>
   <label class="field-label" for="loginEmail">Email</label>
@@ -204,7 +231,7 @@ $('#scheduleSave').addEventListener('click', event => {
   input.value = '';
   input.dispatchEvent(new Event('input'));
   send(text, { vis: when });
-  toast(`Scheduled for ${new Date(when).toLocaleString([], { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}.`);
+  toast(`Scheduled for ${new Date(when).toLocaleString([], { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: api.ui.hour12 })}.`);
 });
 
 // ---------- one-time UI changes after login ----------
@@ -335,8 +362,8 @@ function render() {
     const row = document.createElement('div');
     row.className = `message-row ${m.mine ? 'outgoing' : 'incoming'}`;
     const time = m.scheduled
-      ? 'Scheduled · ' + m.at.toLocaleString([], { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })
-      : m.at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      ? 'Scheduled · ' + m.at.toLocaleString([], { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: api.ui.hour12 })
+      : m.at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: api.ui.hour12 });
     const expiry = m.expiresAtMs ? `<span class="expiry">⌛ ${expiryLabel(m, m.at.getTime())}</span>` : '';
     let status = '';
     if (m.mine) {
@@ -579,7 +606,9 @@ function startChat(email) {
     });
     render();
     cleanupExpired();
+    hideSplash();
   }, error => {
+    hideSplash();
     console.warn('Listen failed', error);
     messagesEl.innerHTML = `<div class="chat-empty">Could not load messages (${escapeHtml(error.code || 'error')}).</div>`;
   });
@@ -595,8 +624,8 @@ function stopChat() {
 }
 
 onAuthStateChanged(auth, user => {
-  if (!IS_APP) return; // in a normal browser tab: never load or show the chat
-  if (!user) { stopChat(); return; }
+  if (!IS_APP) { hideSplash(); return; } // in a normal browser tab: never load or show the chat
+  if (!user) { stopChat(); hideSplash(); return; }
   const email = String(user.email || '').toLowerCase();
   if (!ALLOWED.includes(email)) {
     loginError.textContent = 'This account is not allowed in this chat.';
@@ -605,6 +634,30 @@ onAuthStateChanged(auth, user => {
   }
   startChat(email);
 });
+
+// ---------- always show the newest messages when the app comes back (for example from a notification) ----------
+// On phones the live connection can go to sleep while the app is in the background; a new message then only appeared
+// after sending something. Reconnect and ask the server for the latest messages every time the app returns.
+let lastResync = 0;
+let hiddenAt = 0;
+async function resyncNow(force) {
+  if (!me) return;
+  const now = Date.now();
+  if (!force && now - lastResync < 4000) return;
+  lastResync = now;
+  try { await disableNetwork(db); await enableNetwork(db); } catch (error) { console.warn('Reconnect failed', error); }
+  try { await getDocsFromServer(query(collection(db, 'messages'), orderBy('createdAt', 'desc'), limit(60))); } catch (error) { /* offline: the live list updates when the connection is back */ }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return; }
+  if (me && (!hiddenAt || Date.now() - hiddenAt > 2000)) resyncNow(true);
+});
+window.addEventListener('pageshow', event => { if (event.persisted) resyncNow(true); });
+window.addEventListener('online', () => resyncNow(true));
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('message', event => { if (event.data && event.data.type === 'refresh') resyncNow(true); });
+}
+api.hooks.start.push(() => { setTimeout(() => resyncNow(true), 1500); });
 
 // When the app returns to the front (for example after tapping a notification), show the newest message.
 function showLatest() {
