@@ -105,6 +105,9 @@ export const api = {
   toast: message => toast(message),
   render: () => render(),
   notifyOther: at => notifyOther(at),
+  send: (text, opts) => send(text, opts),
+  previewText: m => previewText(m),
+  mediaHtml: null,
   deleteMessage: id => deleteMessage(id),
   clearAll: () => clearAll(),
   enablePush: () => ensurePush(true),
@@ -327,7 +330,7 @@ function render() {
     items.push({ ...m, mine: mineMsg, scheduled, at: new Date(m.visibleAtMs || m.created.getTime()) });
   }
   for (const [id, f] of failed) {
-    if (!lastDocs.some(m => m.id === id)) items.push({ id, text: f.text, senderEmail: me, mine: true, scheduled: false, failed: true, fwd: f.fwd, fwdFrom: f.fwdFrom, replyTo: f.reply || null, expiresAtMs: f.exp, at: new Date(f.vis || f.at) });
+    if (!lastDocs.some(m => m.id === id)) items.push({ id, text: f.text, senderEmail: me, mine: true, scheduled: false, failed: true, kind: (f.extra && f.extra.kind) || 'text', media: (f.extra && f.extra.media) || [], once: !!(f.extra && f.extra.once), fwd: f.fwd, fwdFrom: f.fwdFrom, replyTo: f.reply || null, expiresAtMs: f.exp, at: new Date(f.vis || f.at) });
   }
   items.sort((a, b) => a.at - b.at);
   if (privacy) {
@@ -376,7 +379,7 @@ function render() {
     const tint = !m.mine ? '' : m.failed ? ' st-fail' : m.scheduled ? '' : m.readAtMs ? ' st-read' : ' st-sent';
     const quote = m.replyTo ? `<div class="reply-quote" data-reply-id="${escapeHtml(m.replyTo.id)}"><b>${escapeHtml(m.replyTo.from === me ? 'You' : prettyName(m.replyTo.from || ''))}</b><span>${escapeHtml(m.replyTo.text)}</span></div>` : '';
     row.dataset.id = m.id;
-    row.innerHTML = `<div class="bubble${m.scheduled ? ' scheduled' : ''}${tint}">${m.fwd ? `<span class="fwd-tag">↪ Forwarded${m.fwdFrom ? ' from ' + escapeHtml(prettyName(m.fwdFrom)) : ''}</span>` : ''}${quote}<p>${escapeHtml(m.text)}</p><div class="message-meta"><time>${escapeHtml(time)}</time>${status}${expiry}</div></div>`;
+    row.innerHTML = `<div class="bubble${m.scheduled ? ' scheduled' : ''}${tint}">${m.fwd ? `<span class="fwd-tag">↪ Forwarded${m.fwdFrom ? ' from ' + escapeHtml(prettyName(m.fwdFrom)) : ''}</span>` : ''}${quote}${api.mediaHtml ? api.mediaHtml(m) : ''}${m.text ? `<p>${escapeHtml(m.text)}</p>` : ''}<div class="message-meta"><time>${escapeHtml(time)}</time>${status}${expiry}</div></div>`;
     messagesEl.appendChild(row);
   }
   if (api.ui.typing) {
@@ -393,11 +396,19 @@ function render() {
 }
 
 // ---------- delete ----------
+function previewText(m) {
+  return m.text || (m.kind === 'image' ? '📷 Photo' : m.kind === 'voice' ? '🎤 Voice message' : '');
+}
+// photos and voice notes live in the "media" collection: remove them together with their message
+function deleteMediaOf(mediaList) {
+  for (const item of mediaList || []) if (item && item.id) deleteDoc(doc(db, 'media', item.id)).catch(() => {});
+}
 function cleanupExpired() {
   const now = Date.now();
   for (const m of lastDocs) {
     if (m.pending || !m.expiresAtMs || m.expiresAtMs > now || deleting.has(m.id)) continue;
     deleting.add(m.id);
+    deleteMediaOf(m.media);
     deleteDoc(doc(db, 'messages', m.id)).catch(error => {
       console.warn('Delete expired failed', error);
       deleting.delete(m.id);
@@ -416,6 +427,8 @@ async function deleteMessage(id) {
   if (failed.has(id)) { failed.delete(id); render(); return; }
   if (!confirm('Delete this message for both of you?')) return;
   try {
+    const gone = lastDocs.find(m => m.id === id);
+    if (gone) deleteMediaOf(gone.media);
     await deleteDoc(doc(db, 'messages', id));
   } catch (error) {
     toast(`Could not delete (${error && error.code ? error.code : 'error'}).`);
@@ -431,6 +444,7 @@ async function clearAll() {
     let inBatch = 0;
     let total = 0;
     for (const d of snapshot.docs) {
+      deleteMediaOf((d.data() || {}).media);
       batch.delete(d.ref);
       inBatch += 1;
       total += 1;
@@ -557,14 +571,15 @@ async function send(text, opts = {}) {
   failed.delete(id);
   const payload = { text, senderEmail: me, createdAt: serverTimestamp(), expiresAtMs, expiresAt: Timestamp.fromMillis(expiresAtMs) };
   if (vis) payload.visibleAtMs = vis;
+  if (opts.extra) Object.assign(payload, opts.extra);
   if (opts.fwd) { payload.fwd = true; payload.fwdFrom = opts.fwdFrom || me; }
   if (opts.reply && opts.reply.id) payload.replyTo = { id: String(opts.reply.id), text: String(opts.reply.text || '').slice(0, 140), from: String(opts.reply.from || '') };
   try {
     await setDoc(doc(db, 'messages', id), payload);
-    notifyOther(vis, text);
+    notifyOther(vis, opts.label || text);
   } catch (error) {
     console.warn('Send failed', error);
-    failed.set(id, { text, exp: expiresAtMs, vis, at: Date.now(), fwd: !!opts.fwd, fwdFrom: opts.fwdFrom || '', reply: opts.reply || null });
+    failed.set(id, { text, exp: expiresAtMs, vis, at: Date.now(), fwd: !!opts.fwd, fwdFrom: opts.fwdFrom || '', reply: opts.reply || null, extra: opts.extra || null, label: opts.label || '' });
     render();
     toast(error && error.code === 'permission-denied' ? 'Not allowed by Firestore rules.' : 'Message not sent. Tap Retry.');
   }
@@ -579,7 +594,7 @@ messagesEl.addEventListener('click', event => {
   const retry = event.target.closest('.retry-btn');
   if (retry) {
     const f = failed.get(retry.dataset.id);
-    if (f) send(f.text, { id: retry.dataset.id, exp: f.exp, vis: f.vis, fwd: f.fwd, fwdFrom: f.fwdFrom, reply: f.reply });
+    if (f) send(f.text, { id: retry.dataset.id, exp: f.exp, vis: f.vis, fwd: f.fwd, fwdFrom: f.fwdFrom, reply: f.reply, extra: f.extra, label: f.label });
     return;
   }
   const fwd = event.target.closest('.msg-fwd');
@@ -602,7 +617,7 @@ function startChat(email) {
     lastDocs = snapshot.docs.map(d => {
       const data = d.data({ serverTimestamps: 'estimate' });
       const created = data.createdAt && data.createdAt.toDate ? data.createdAt.toDate() : new Date();
-      return { id: d.id, text: String(data.text || ''), senderEmail: data.senderEmail, created, visibleAtMs: Number(data.visibleAtMs) || 0, expiresAtMs: Number(data.expiresAtMs) || 0, readAtMs: Number(data.readAtMs) || 0, fwd: !!data.fwd, fwdFrom: String(data.fwdFrom || ''), replyTo: data.replyTo && typeof data.replyTo === 'object' ? { id: String(data.replyTo.id || ''), text: String(data.replyTo.text || ''), from: String(data.replyTo.from || '') } : null, pending: d.metadata.hasPendingWrites };
+      return { id: d.id, text: String(data.text || ''), senderEmail: data.senderEmail, created, visibleAtMs: Number(data.visibleAtMs) || 0, expiresAtMs: Number(data.expiresAtMs) || 0, readAtMs: Number(data.readAtMs) || 0, kind: String(data.kind || 'text'), once: !!data.once, viewedAtMs: Number(data.viewedAtMs) || 0, media: Array.isArray(data.media) ? data.media.map(x => ({ id: String((x && x.id) || ''), w: Number(x && x.w) || 0, h: Number(x && x.h) || 0, t: String((x && x.t) || ''), d: Number(x && x.d) || 0 })) : [], fwd: !!data.fwd, fwdFrom: String(data.fwdFrom || ''), replyTo: data.replyTo && typeof data.replyTo === 'object' ? { id: String(data.replyTo.id || ''), text: String(data.replyTo.text || ''), from: String(data.replyTo.from || '') } : null, pending: d.metadata.hasPendingWrites };
     });
     render();
     cleanupExpired();

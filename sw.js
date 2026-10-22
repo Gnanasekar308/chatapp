@@ -1,7 +1,7 @@
 'use strict';
-const CACHE = 'ourchat-shell-v12';
+const CACHE = 'ourchat-shell-v13';
 const ASSETS = [
-  './', './index.html', './src/styles.css', './src/chat.css', './src/app.js', './src/chat.js', './src/extras.js', './src/lock.js', './src/firebase.js',
+  './', './index.html', './src/styles.css', './src/chat.css', './src/app.js', './src/chat.js', './src/extras.js', './src/lock.js', './src/media.js', './src/zip.js', './src/firebase.js',
   './manifest.webmanifest', './assets/icon-192.png', './assets/icon-512.png'
 ];
 self.addEventListener('install', event => {

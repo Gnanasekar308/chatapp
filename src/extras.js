@@ -704,7 +704,7 @@ function renderReply() {
 }
 api.ui.onReplyChange = renderReply;
 function setReply(message) {
-  api.ui.reply = { id: message.id, text: message.text, from: message.senderEmail };
+  api.ui.reply = { id: message.id, text: api.previewText(message) || message.text, from: message.senderEmail };
   renderReply();
   messageInput.focus();
 }
@@ -727,7 +727,12 @@ function openMsgMenu(row) {
   document.querySelectorAll('.message-row.picked').forEach(r => r.classList.remove('picked'));
   row.classList.add('picked');
   msgMenu.dataset.id = id;
-  msgMenu.innerHTML = '<button type="button" data-do="reply"><i>↩</i><span>Reply</span></button><button type="button" data-do="copy"><i>⧉</i><span>Copy</span></button><button type="button" data-do="delete" class="danger"><i>🗑</i><span>Delete</span></button>';
+  const target = api.docs.find(m => m.id === id);
+  const isMedia = !!(window.OurMedia && window.OurMedia.isMedia(target));
+  msgMenu.innerHTML = '<button type="button" data-do="reply"><i>↩</i><span>Reply</span></button>' +
+    (target.text ? '<button type="button" data-do="copy"><i>⧉</i><span>Copy</span></button>' : '') +
+    (isMedia && !target.once ? '<button type="button" data-do="download"><i>⬇</i><span>Download</span></button>' : '') +
+    '<button type="button" data-do="delete" class="danger"><i>🗑</i><span>Delete</span></button>';
   msgMenu.hidden = false;
   const rect = row.querySelector('.bubble').getBoundingClientRect();
   const width = msgMenu.offsetWidth;
@@ -749,7 +754,8 @@ msgMenu.addEventListener('click', async event => {
   if (button.dataset.do === 'reply') setReply(message);
   else if (button.dataset.do === 'copy') {
     try { await navigator.clipboard.writeText(message.text); toast('Copied.'); } catch { toast('Could not copy.'); }
-  } else if (button.dataset.do === 'delete') api.deleteMessage(id);
+  } else if (button.dataset.do === 'download') window.OurMedia.download(message);
+  else if (button.dataset.do === 'delete') api.deleteMessage(id);
 });
 document.addEventListener('pointerdown', event => { if (!msgMenu.hidden && !event.target.closest('#msgMenu')) closeMsgMenu(); }, true);
 messageList.addEventListener('scroll', closeMsgMenu);
