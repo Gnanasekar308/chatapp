@@ -3,15 +3,15 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content" />
-  <meta name="theme-color" content="#10111b" />
+  <meta name="theme-color" content="#0a1224" />
   <meta name="description" content="கனவுரை: a private chat space for two" />
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="stylesheet" href="src/styles.css" />
   <link rel="stylesheet" href="src/chat.css" />
   <title>கனவுரை</title>
   <style>
-    html,body{background:#10111b}
-    #splash{position:fixed;inset:0;z-index:200;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;background:#10111b;transition:opacity .3s}
+    html,body{background:#0a1224}
+    #splash{position:fixed;inset:0;z-index:200;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;background:#0a1224;transition:opacity .3s}
     #splash img{width:96px;height:96px;border-radius:24px}
     #splash p{margin:0;color:#f4f4fb;font:700 24px 'Nirmala UI','Noto Sans Tamil','Latha',sans-serif}
     #splash.out{opacity:0;pointer-events:none}
@@ -19,6 +19,23 @@
 </head>
 <body>
   <div id="splash"><img src="assets/icon-192.png" alt=""><p>கனவுரை</p></div>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false"><defs>
+    <symbol id="i-back" viewBox="0 0 24 24"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></symbol>
+    <symbol id="i-phone" viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></symbol>
+    <symbol id="i-video" viewBox="0 0 24 24"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="19" r="1.4" fill="currentColor"/></symbol>
+    <symbol id="i-smile" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></symbol>
+    <symbol id="i-clip" viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></symbol>
+    <symbol id="i-mic" viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><polygon points="7 4 20 12 7 20 7 4" fill="currentColor"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16" rx="1" fill="currentColor"/><rect x="14" y="4" width="4" height="16" rx="1" fill="currentColor"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><polyline points="4 12.5 9.5 18 20 6.5"/></symbol>
+    <symbol id="i-check2" viewBox="0 0 24 24"><polyline points="1.5 12.5 7 18 17.5 6.5"/><polyline points="10 15 12.5 17.5 22.5 6.5"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></symbol>
+  </defs></svg>
   <script>setTimeout(function(){var s=document.getElementById("splash");if(s)s.remove();},7000);</script>
   <div class="app-shell">
     <aside class="rail">
@@ -29,7 +46,7 @@
       <div class="rail-spacer"></div><div class="avatar tiny">G</div>
     </aside>
     <aside class="sidebar">
-      <div class="sidebar-top"><div><p class="eyebrow">YOUR PRIVATE SPACE</p><h1>Messages<span class="online-dot"></span></h1></div><button class="icon-btn" id="newChatBtn" title="New chat">＋</button></div>
+      <div class="sidebar-top"><div><p class="eyebrow">CHATS</p><h1>கனவுரை</h1></div><button class="icon-btn" id="newChatBtn" title="New chat">＋</button></div>
       <label class="search"><span>⌕</span><input id="searchInput" placeholder="Search conversations" /></label>
       <div class="filter-row"><button class="filter active">All <span>3</span></button><button class="filter">Unread</button><button class="filter">Pinned</button></div>
       <div class="conversation-list" id="conversationList">
@@ -40,7 +57,7 @@
       <div class="sidebar-footer"><span class="secure-icon">✦</span><div><strong>Quiet by design</strong><p>Outgoing previews expire locally</p></div></div>
     </aside>
     <main class="chat-panel">
-      <header class="chat-header"><div class="contact"><div class="avatar pink">M</div><div><h2 id="contactName">Mira Chen</h2><p><span class="presence"></span> Active now <span class="encrypted">· Private space</span></p></div></div><div class="header-actions"><button class="icon-btn call-btn" id="audioCall" title="Audio call">♬</button><button class="icon-btn call-btn" id="videoCall" title="Video call">▣</button><button class="icon-btn" id="detailsBtn" title="Chat details">⋯</button></div></header>
+      <header class="chat-header"><button type="button" class="hbtn" id="backBtn" title="Back to chats" aria-label="Back to chats"><svg class="ic" aria-hidden="true"><use href="#i-back"/></svg></button><div class="contact"><div class="avatar pink">M</div><div class="contact-text"><h2 id="contactName">Mira Chen</h2><p><span class="presence"></span> Active now <span class="encrypted">· Private space</span></p></div></div><div class="header-actions"><button type="button" class="hbtn call-btn" id="audioCall" title="Audio call" aria-label="Audio call"><svg class="ic" aria-hidden="true"><use href="#i-phone"/></svg></button><button type="button" class="hbtn call-btn" id="videoCall" title="Video call" aria-label="Video call"><svg class="ic" aria-hidden="true"><use href="#i-video"/></svg></button><button type="button" class="hbtn" id="detailsBtn" title="More options" aria-label="More options"><svg class="ic" aria-hidden="true"><use href="#i-more"/></svg></button></div></header>
       <div class="security-banner"><span>✧</span> Outgoing preview messages expire locally after 24 hours <button id="learnExpiry">Details</button></div>
       <section class="messages" id="messages" aria-live="polite">
         <div class="day-divider"><span>TODAY</span></div>
@@ -50,7 +67,7 @@
         <div class="message-row outgoing"><div class="bubble scheduled"><p>Remind me to send the photos tomorrow.</p><div class="message-meta"><time>Scheduled · 9:00 AM</time><span class="status pending" title="Scheduled">● Scheduled</span></div></div></div>
         <div class="typing-indicator" id="typingIndicator" hidden><span></span><span></span><span></span><small>Mira is typing</small></div>
       </section>
-      <div class="composer-wrap"><div class="composer-tools"><button id="timerBtn" class="tool-btn">◷ <span>Timer</span></button><button id="reminderBtn" class="tool-btn">♧ <span>Reminder</span></button><button id="notifyBtn" class="tool-btn">♢ <span>Notifications</span></button><span class="composer-note">Messages auto-expire in 24h</span></div><form id="composer" class="composer"><button type="button" class="attach-btn" id="attachBtn" title="Attach">＋</button><textarea id="messageInput" rows="1" maxlength="2000" placeholder="Write something thoughtful…" aria-label="Message"></textarea><button type="button" class="emoji-btn" id="emojiBtn" title="Add sparkle">✧</button><button type="submit" class="send-btn" aria-label="Send message">↑</button></form><p class="demo-note">Local preview only · Messages are not delivered to other users</p></div>
+      <div class="composer-wrap"><div class="composer-tools"><button id="timerBtn" class="tool-btn">◷ <span>Timer</span></button><button id="reminderBtn" class="tool-btn">♧ <span>Reminder</span></button><button id="notifyBtn" class="tool-btn">♢ <span>Notifications</span></button><span class="composer-note">Messages auto-expire in 24h</span></div><form id="composer" class="composer"><div class="composer-bar"><button type="button" class="ib" id="emojiBtn" title="Emoji" aria-label="Emoji"><svg class="ic" aria-hidden="true"><use href="#i-smile"/></svg></button><textarea id="messageInput" rows="1" maxlength="2000" placeholder="Message" aria-label="Message"></textarea><button type="button" class="ib" id="attachBtn" title="Attach a photo" aria-label="Attach a photo"><svg class="ic" aria-hidden="true"><use href="#i-clip"/></svg></button><button type="button" class="ib" id="cameraBtn" title="Camera" aria-label="Camera"><svg class="ic" aria-hidden="true"><use href="#i-camera"/></svg></button></div><button type="button" class="round-btn" id="micBtn" title="Record a voice note" aria-label="Record a voice note"><svg class="ic" aria-hidden="true"><use href="#i-mic"/></svg></button><button type="submit" class="round-btn send-btn" id="sendBtn" title="Send" aria-label="Send message"><svg class="ic" aria-hidden="true"><use href="#i-send"/></svg></button></form><p class="demo-note">Local preview only · Messages are not delivered to other users</p></div>
     </main>
     <aside class="details-panel" id="detailsPanel"><div class="details-heading"><h3>Conversation</h3><button class="icon-btn" id="closeDetails">×</button></div><div class="profile-card"><div class="avatar pink large">M</div><h3 id="detailsName">Mira Chen</h3><p>Private conversation</p><span class="profile-pill">✦ 24-hour expiry</span></div><div class="detail-section"><p class="eyebrow">QUICK ACTIONS</p><button class="detail-action" id="detailTimer">◷ <span>Set message timer</span><b>›</b></button><button class="detail-action" id="detailReminder">♧ <span>Create reminder</span><b>›</b></button><button class="detail-action" id="appearanceBtn">◐ <span>App appearance</span><b>›</b></button></div><div class="detail-section"><p class="eyebrow">MESSAGE STATUS</p><div class="status-legend"><span class="status sent">●</span><span><b>Green</b><small>Sent status is simulated in preview mode</small></span></div><div class="status-legend"><span class="status pending">●</span><span><b>Yellow</b><small>Sending or queued</small></span></div><div class="status-legend"><span class="status failed">●</span><span><b>Red</b><small>Failed to send</small></span></div></div></aside>
   </div>
